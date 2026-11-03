@@ -90,6 +90,8 @@ a { color: var(--link); }
   .topbar { display: flex; align-items: center; gap: 10px; padding: 10px 16px; background: var(--surface);
     border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 20; }
   .topbar .t { font-weight: 600; flex: 1; }
+  .topbar .btn.hb { width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); display: grid; place-items: center; padding: 0; }
+  .topbar .hb svg { width: 22px; height: 22px; }
   .main { padding: 16px 16px 90px; }
   .hide-m { display: none !important; }
 }
@@ -671,10 +673,11 @@ function renderShell() {
   $('#app').innerHTML =
     '<div class="shell"><aside class="side" id="side"><div class="brand">' + logoHtml() + '<div>Remoza-docházka<small>' + esc(s.companyName) + '</small></div></div>' +
     '<nav class="nav" id="nav"></nav><div class="thsw-w"><div class="thsw-l">Vzhled</div><div class="thsw" id="thsw"></div></div><div class="side-foot">' + esc(u.name) + '<br><span class="small" style="opacity:.7">' + esc(s.roles[u.role]) + '</span> · <a id="lo">Odhlásit</a></div></aside>' +
-    '<div style="flex:1;min-width:0"><div class="topbar"><button class="btn icon" id="mb">' + icon('menu') + '</button><div class="t" id="tt"></div><div id="tst"></div></div>' +
+    '<div style="flex:1;min-width:0"><div class="topbar"><button class="btn icon" id="mb">' + icon('menu') + '</button><div class="t" id="tt"></div><div id="tst"></div><button class="btn icon hb" id="hb" title="Domů" aria-label="Zpět na hlavní stránku">' + icon('home') + '</button></div>' +
     '<main class="main" id="main"></main></div></div>';
   $('#lo').onclick = () => doLogout(false);
   $('#mb').onclick = () => toggleSide(true);
+  $('#hb').onclick = () => go('home');
   renderNav(); renderThemeSw();
   go(S.view || 'home');
 }
@@ -692,12 +695,15 @@ function toggleSide(open) {
   if (!open && bd) bd.remove();
 }
 const VIEWS = {};
-function go(view, params) {
+function go(view, params, fromHistory) {
   S.view = view; stopTick(); closeModal();
+  // tlačítko Zpět v telefonu (Android) vrací na hlavní stránku
+  if (!fromHistory) { try { if (view === 'home') history.replaceState({ v: 'home' }, ''); else history.pushState({ v: view }, ''); } catch (e) {} }
   if ($('#tst')) $('#tst').innerHTML = '';
   const item = navItems().filter(i => i.id === view)[0];
   if (!item) { view = S.view = 'home'; }
   renderNav();
+  if ($('#hb')) $('#hb').style.display = view === 'home' ? 'none' : '';
   $('#tt').textContent = (navItems().filter(i => i.id === view)[0] || {}).label || '';
   const el = $('#main');
   loading(el);
@@ -1387,15 +1393,16 @@ VIEWS.profile = async function (el) {
   const u = S.boot.user, s = S.boot.settings;
   el.innerHTML = '<h1>Můj účet</h1><div class="card"><div class="kv" style="max-width:420px"><div>Jméno</div><div>' + esc(u.name) + '</div><div>E-mail</div><div>' + esc(u.email) + '</div>' +
     '<div>Role</div><div>' + esc(s.roles[u.role]) + '</div><div>Fond</div><div>' + u.dailyHours + ' h / den</div><div>Pevné jádro</div><div>' + esc(u.coreStart) + '–' + esc(u.coreEnd) + '</div></div></div>' +
-    '<div class="card" style="max-width:460px"><h2>Změna hesla</h2><form id="cp" style="display:grid;gap:10px">' +
+    (isMgr() ? '<div class="card" style="max-width:460px"><h2>Změna hesla</h2><form id="cp" style="display:grid;gap:10px">' +
     '<label class="f">Současné heslo<input name="o" type="password" required autocomplete="current-password"></label>' +
     '<label class="f">Nové heslo (min. 8 znaků)<input name="n" type="password" required minlength="8" autocomplete="new-password"></label>' +
     '<label class="f">Nové heslo znovu<input name="n2" type="password" required minlength="8" autocomplete="new-password"></label>' +
-    '<button class="btn primary" type="submit">Změnit heslo</button></form></div>' +
+    '<button class="btn primary" type="submit">Změnit heslo</button></form></div>' :
+      '<div class="card" style="max-width:460px"><h2>Heslo</h2><p class="small muted">Heslo nastavuje administrátor. Pokud ho potřebujete změnit nebo jste ho zapomněli, obraťte se na něj.</p></div>') +
     '<div class="card" style="max-width:460px"><h2>Aplikace na telefonu</h2><p class="small">Otevřete tuto stránku v telefonu a zvolte <b>Sdílet → Přidat na plochu</b> (iPhone, Safari) nebo <b>⋮ → Přidat na plochu</b> (Android, Chrome). Docházka se pak spouští jako aplikace.</p></div>' +
     '<button class="btn danger" id="lo2">Odhlásit se</button>';
   $('#lo2', el).onclick = () => doLogout(false);
-  $('#cp', el).onsubmit = async e => {
+  if ($('#cp', el)) $('#cp', el).onsubmit = async e => {
     e.preventDefault(); const f = e.target;
     if (f.n.value !== f.n2.value) return fail('Nová hesla se neshodují.');
     try { await call('changePassword', { oldPassword: f.o.value, newPassword: f.n.value }); f.reset(); toast('Heslo změněno'); } catch (err) { fail(err); }
@@ -1405,6 +1412,7 @@ VIEWS.profile = async function (el) {
 /* ================================================================
  *  START
  * ================================================================ */
+window.addEventListener('popstate', e => { if (S.boot && $('#main')) { go((e.state && e.state.v) || 'home', null, true); } });
 (async function init() {
   S.token = store.get('token');
   if (!S.token) { S.token = sess.get('token'); S.shared = !!S.token; }
