@@ -283,6 +283,8 @@ tfoot td { font-weight: 650; background: var(--surface-2); }
 .geo-b .dot { display: inline-block; vertical-align: 0; margin-right: 6px; }
 .geo-map { width: 100%; height: 240px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
 .plist { display: grid; gap: 8px; max-height: 55vh; overflow-y: auto; }
+.psec { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 6px 2px -2px; }
+.psec:first-child { margin-top: 0; }
 .pbtn { text-align: left; border: 1px solid var(--border); background: var(--surface); border-radius: 10px; padding: 12px 14px; cursor: pointer; }
 .pbtn:hover, .pbtn.on { border-color: var(--primary); background: var(--info-bg); }
 .pbtn b { display: block; font-size: 16px; }
@@ -947,6 +949,7 @@ async function doPunch(type, pid, el) {
     const t = await call('punch', { type: type, projectId: pid, lat: pos ? pos.lat : '', lng: pos ? pos.lng : '', acc: pos ? pos.acc : '', source: matchMedia('(max-width: 860px)').matches ? 'mobile' : 'web' });
     if (geo && !pos && t.punchId) getPos(true, 20000).then(p => { if (p) call('punchGeo', { id: t.punchId, lat: p.lat, lng: p.lng, acc: p.acc }).catch(() => {}); });
     S.punching = false;
+    if (pid) { const r = (S.boot.recentProjects || []).filter(x => x !== pid); r.unshift(pid); S.boot.recentProjects = r.slice(0, 4); try { const c = JSON.parse(cStore().get('boot') || 'null'); if (c && c.d) { c.d.recentProjects = S.boot.recentProjects; cStore().set('boot', JSON.stringify(c)); } } catch (e) {} }
     setToday(t);
     if (pid !== null) S.lastProject = pid;
     toast(S.boot.settings.eventTypes[type] + ' ' + (t.punchTime || t.time) + (type === 'IN' ? ' · ' + projLabel(pid) : ''));
@@ -955,14 +958,23 @@ async function doPunch(type, pid, el) {
 }
 function pickProject(title, cb, current) {
   const list = S.boot.projects;
+  const recent = (S.boot.recentProjects || []).map(id => list.filter(p => p.id === id)[0]).filter(Boolean);
   const m = openModal(title, '<input id="pq" placeholder="Hledat projekt…" style="width:100%;margin-bottom:10px">' +
     '<div class="plist" id="pl"></div><div class="row end" style="margin-top:12px"><button class="btn" type="button" data-close>Zavřít</button></div>');
   const draw = q => {
     q = (q || '').toLowerCase();
-    const items = [{ id: '', code: 'Bez projektu', name: 'Práce mimo projekty' }].concat(list)
-      .filter(p => !q || (p.code + ' ' + p.name).toLowerCase().indexOf(q) >= 0);
-    $('#pl', m).innerHTML = items.map(p => '<button class="pbtn' + ((current !== undefined ? current : S.lastProject) === p.id ? ' on' : '') + '" style="--pc:' + projColor(p.id) + '" data-id="' + esc(p.id) + '"><b>' + esc(p.code) + '</b><span class="muted small">' + esc(p.name) + '</span></button>').join('') ||
-      '<div class="muted">Nic nenalezeno.</div>';
+    const none = { id: '', code: 'Bez projektu', name: 'Práce mimo projekty' };
+    const btn = p => '<button class="pbtn' + ((current !== undefined ? current : S.lastProject) === p.id ? ' on' : '') + '" style="--pc:' + projColor(p.id) + '" data-id="' + esc(p.id) + '"><b>' + esc(p.code) + '</b><span class="muted small">' + esc(p.name) + '</span></button>';
+    let html;
+    if (q) {
+      html = [none].concat(list).filter(p => (p.code + ' ' + p.name).toLowerCase().indexOf(q) >= 0).map(btn).join('');
+    } else if (recent.length && list.length > 4) {
+      // nahoře naposledy použité, pod nimi ostatní abecedně podle kódu
+      const rid = recent.map(p => p.id);
+      html = '<div class="psec">Naposledy použité</div>' + recent.map(btn).join('') +
+        '<div class="psec">Všechny projekty</div>' + [none].concat(list.filter(p => rid.indexOf(p.id) < 0)).map(btn).join('');
+    } else html = [none].concat(list).map(btn).join('');
+    $('#pl', m).innerHTML = html || '<div class="muted">Nic nenalezeno.</div>';
     $$('.pbtn', m).forEach(b => b.onclick = () => { closeModal(); cb(b.dataset.id); });
   };
   draw('');
