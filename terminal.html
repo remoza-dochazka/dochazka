@@ -112,6 +112,8 @@ a { color: var(--link); }
 .btn.icon { padding: 6px; border: none; background: none; }
 .btn svg { width: 20px; height: 20px; flex-shrink: 0; }
 .btn:disabled { opacity: .5; cursor: default; }
+.btn.busy:disabled { opacity: .85; cursor: progress; }
+.bspin { width: 15px; height: 15px; flex: none; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
 .seg button { border: none; background: var(--surface); padding: 7px 14px; cursor: pointer; }
 .seg button.on { background: var(--primary); color: var(--primary-ink); font-weight: 600; }

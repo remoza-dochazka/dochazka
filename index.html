@@ -112,6 +112,8 @@ a { color: var(--link); }
 .btn.icon { padding: 6px; border: none; background: none; }
 .btn svg { width: 20px; height: 20px; flex-shrink: 0; }
 .btn:disabled { opacity: .5; cursor: default; }
+.btn.busy:disabled { opacity: .85; cursor: progress; }
+.bspin { width: 15px; height: 15px; flex: none; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
 .seg button { border: none; background: var(--surface); padding: 7px 14px; cursor: pointer; }
 .seg button.on { background: var(--primary); color: var(--primary-ink); font-weight: 600; }
@@ -572,12 +574,36 @@ function prefetch() {
   list.forEach(x => callNet(x[0], x[1]).then(d => cSet(cKey(x[0], x[1]), d)).catch(() => {}));
 }
 async function callNet(action, args) {
-  const r = await gs('api', S.token, action, args || {}, deviceTz());
+  NET++;
+  let r;
+  try { r = await gs('api', S.token, action, args || {}, deviceTz()); } finally { NET--; checkBusy(); }
   if (!r.ok) {
     if (r.code === 'AUTH') { doLogout(true); }
     throw new Error(r.error);
   }
   return r.data;
+}
+/* po odeslání formuláře ukazuje tlačítko „Ukládám…“ s točícím kolečkem, dokud server neodpoví (a nejde kliknout dvakrát) */
+let NET = 0, BUSY = null, busyT = null;
+document.addEventListener('submit', e => {
+  const f = e.target, b = e.submitter || $('button[type=submit],button:not([type])', f);
+  if (!b || f.id === 'lf' || f.id === 'aq') return;
+  if (b.classList.contains('busy')) { e.preventDefault(); e.stopImmediatePropagation(); return; }
+  if (BUSY) unBusy();
+  const txt = b.textContent.trim();
+  BUSY = { b: b, h: b.innerHTML, d: b.disabled };
+  b.classList.add('busy'); b.disabled = true;
+  b.innerHTML = '<span class="bspin"></span>' + (/ulož/i.test(txt) ? 'Ukládám…' : esc(txt) + '…');
+  setTimeout(checkBusy, 100);
+}, true);
+function unBusy() {
+  const x = BUSY; BUSY = null; if (!x) return;
+  if (x.b.isConnected && x.b.classList.contains('busy')) { x.b.classList.remove('busy'); x.b.innerHTML = x.h; x.b.disabled = x.d; }
+}
+function checkBusy() {
+  clearTimeout(busyT);
+  if (!BUSY || NET > 0) return;
+  busyT = setTimeout(() => { if (NET === 0) unBusy(); }, 150);
 }
 function esc(s) { return String(s === undefined || s === null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function $(sel, root) { return (root || document).querySelector(sel); }
