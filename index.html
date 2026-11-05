@@ -523,7 +523,50 @@ function gs(fn, ...args) {
     google.script.run.withSuccessHandler(res).withFailureHandler(e => rej(new Error(e && e.message ? e.message : 'Chyba spojení se serverem.')))[fn](...args);
   });
 }
+/* ---------- rychlost: okamžité zobrazení z paměti zařízení, čerstvá data se dotáhnou na pozadí ---------- */
+const SWR_ACTIONS = { today: 1, dayAll: 1, month: 1, monthAll: 1, projects: 1, users: 1, absences: 1 };
+let SWR = null; // { seq, pending, fresh }
+function cStore() { return S.shared ? sess : store; }
+function cKey(action, args) { return 'c:' + (S.boot && S.boot.user ? S.boot.user.email : '') + ':' + action + ':' + JSON.stringify(args || {}); }
+function cGet(k) { try { const v = cStore().get(k); return v ? JSON.parse(v) : null; } catch (e) { return null; } }
+function cSet(k, d) { try { cStore().set(k, JSON.stringify({ t: Date.now(), d: d })); } catch (e) { cClear(); } }
+function cClear() { [store, sess].forEach(st => { try { const ls = st === store ? window.localStorage : window.sessionStorage; Object.keys(ls).filter(k => k.indexOf('c:') === 0 || k === 'boot').forEach(k => ls.removeItem(k)); } catch (e) {} }); }
 async function call(action, args) {
+  if (SWR_ACTIONS[action]) {
+    const k = cKey(action, args);
+    if (SWR && SWR.seq === S.viewSeq) {
+      const c = cGet(k);
+      if (c && !(action === 'today' && c.d.date !== localDate())) {
+        if (!SWR.fresh) SWR.pending.push({ action: action, args: args, k: k, j: JSON.stringify(c.d) });
+        return action === 'today' ? Object.assign({}, c.d, { __at: c.t }) : c.d;
+      }
+    }
+    const d = await callNet(action, args);
+    cSet(k, d);
+    return d;
+  }
+  return callNet(action, args);
+}
+async function runView(view, el, params) {
+  const seq = S.viewSeq;
+  SWR = { seq: seq, pending: [] };
+  try { await VIEWS[view](el, params || {}); } finally { if (SWR && SWR.seq === seq) { const pend = SWR.pending; SWR = null; if (pend.length) swrRefresh(view, el, params, seq, pend); } }
+}
+async function swrRefresh(view, el, params, seq, pend) {
+  let changed = false;
+  await Promise.all(pend.map(p => callNet(p.action, p.args).then(d => { cSet(p.k, d); if (JSON.stringify(d) !== p.j) changed = true; }).catch(() => {})));
+  if (!changed || S.viewSeq !== seq || S.view !== view || S.punching || $('.modal-bg') || $('.cfm-bg')) return;
+  stopTick();
+  SWR = { seq: seq, pending: [], fresh: true };
+  try { if (view === 'team' || view === 'users') S.users = null; await VIEWS[view](el, params || {}); } catch (e) {} finally { if (SWR && SWR.seq === seq) SWR = null; }
+}
+function prefetch() {
+  if (!S.boot) return;
+  const ym = ymNow(), list = [['month', { email: S.boot.user.email, year: ym.year, month: ym.month }]];
+  if (isMgr()) list.push(['users', undefined], ['dayAll', { date: localDate() }], ['projects', undefined]);
+  list.forEach(x => callNet(x[0], x[1]).then(d => cSet(cKey(x[0], x[1]), d)).catch(() => {}));
+}
+async function callNet(action, args) {
   const r = await gs('api', S.token, action, args || {}, deviceTz());
   if (!r.ok) {
     if (r.code === 'AUTH') { doLogout(true); }
@@ -644,12 +687,14 @@ function viewLogin(msg) {
       else { sess.set('token', S.token); store.del('token'); store.del('lastEmail'); }
       startIdle();
       S.boot = r.data.boot; setToday(S.boot.today);
+      try { cStore().set('boot', JSON.stringify({ t: Date.now(), tok: S.token.slice(-12), d: S.boot })); } catch (e) {}
+      setTimeout(prefetch, 1500);
       renderShell();
     } catch (err) { viewLogin(err.message); }
   });
 }
 async function doLogout(expired, msg) {
-  const t = S.token; S.token = null; S.boot = null; store.del('token'); sess.del('token'); stopIdle(); closeModal();
+  const t = S.token; S.token = null; S.boot = null; store.del('token'); sess.del('token'); stopIdle(); closeModal(); cClear();
   if (t && (!expired || msg)) { try { await gs('logout', t); } catch (e) {} }
   viewLogin(msg || (expired ? 'Přihlášení vypršelo, přihlaste se znovu.' : ''));
 }
@@ -723,14 +768,15 @@ function go(view, params, fromHistory) {
   $('#tt').textContent = (navItems().filter(i => i.id === view)[0] || {}).label || '';
   const el = $('#main');
   loading(el);
-  Promise.resolve(VIEWS[view](el, params || {})).catch(fail);
+  S.viewSeq = (S.viewSeq || 0) + 1;
+  runView(view, el, params).catch(fail);
   window.scrollTo(0, 0);
 }
 
 /* ================================================================
  *  DOMŮ – hlavní obrazovka pracovníka
  * ================================================================ */
-function setToday(t) { S.today = t; S.fetchedAt = Date.now(); }
+function setToday(t) { const at = t && t.__at; if (at) { t = Object.assign({}, t); delete t.__at; } S.today = t; S.fetchedAt = at || Date.now(); if (t && !at) cSet(cKey('today'), t); }
 function liveToday() {
   const t = S.today; if (!t) return null;
   const add = t.state === 'IN' ? Math.floor((Date.now() - S.fetchedAt) / 60000) : 0;
@@ -812,7 +858,7 @@ function renderHome(el) {
   const dateTxt = DAYS[d.getDay()] + ' ' + d.getDate() + '. ' + (d.getMonth() + 1) + '. ' + d.getFullYear();
   $('#tt').innerHTML = '<div class="tdate">' + dateTxt + '</div><div class="tclk" id="tclk">' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()) + '</div>';
   $('#tst').innerHTML = '<div class="tuser">' + esc(u.name) + '</div>' + badge(st[0], st[1]);
-  $$('[data-a]', el).forEach(b => b.onclick = () => homeAction(b.dataset.a, el));
+  $$('[data-a]', el).forEach(b => { b.disabled = !!S.punching; b.onclick = () => homeAction(b.dataset.a, el); });
   $('#dd').onclick = () => openDay(u.email, t.date, () => VIEWS.home(el));
   if ($('#pnb')) $('#pnb').onclick = () => editProjectNote(t, el);
   if ($('#hstats')) {
@@ -853,19 +899,32 @@ function getPos(need, wait) {
     catch (e) { fin(null); }
   });
 }
+function optimisticToday(type, pid) {
+  const t = Object.assign({}, liveToday() || S.today), d = new Date(), now = d.getHours() * 60 + d.getMinutes();
+  t.events = (t.events || []).concat([{ id: 'tmp', type: type, time: pad(d.getHours()) + ':' + pad(d.getMinutes()), projectId: pid || '' }]);
+  if (type === 'IN') { if (t.state === 'OUT' && t.firstIn === null) t.firstIn = now; t.project = pid || ''; t.projectMin = 0; t.projectSince = pad(d.getHours()) + ':' + pad(d.getMinutes()); t.projectNote = ''; }
+  t.state = type === 'OUT' ? 'OUT' : type === 'BREAK_START' ? 'BREAK' : 'IN';
+  if (type === 'OUT') t.lastOut = now;
+  return t;
+}
 async function doPunch(type, pid, el) {
-  $$('[data-a]').forEach(b => b.disabled = true);
+  if (S.punching) return;
+  const prev = S.today, prevAt = S.fetchedAt;
+  S.punching = true;
+  S.today = optimisticToday(type, pid); S.fetchedAt = Date.now();
+  renderHome(el);
   try {
     // poloha u příchodu, změny projektu a odchodu; při režimu „vyžadovat“ se čeká, jinak se doplní na pozadí
     const geo = (type === 'IN' || type === 'OUT') && S.boot.settings.geoMode !== 'off';
     const pos = geo && S.boot.settings.geoMode === 'require' ? await getPos(true) : null;
     const t = await call('punch', { type: type, projectId: pid, lat: pos ? pos.lat : '', lng: pos ? pos.lng : '', acc: pos ? pos.acc : '', source: matchMedia('(max-width: 860px)').matches ? 'mobile' : 'web' });
     if (geo && !pos && t.punchId) getPos(true, 20000).then(p => { if (p) call('punchGeo', { id: t.punchId, lat: p.lat, lng: p.lng, acc: p.acc }).catch(() => {}); });
+    S.punching = false;
     setToday(t);
     if (pid !== null) S.lastProject = pid;
     toast(S.boot.settings.eventTypes[type] + ' ' + (t.punchTime || t.time) + (type === 'IN' ? ' · ' + projLabel(pid) : ''));
-    renderHome(el);
-  } catch (e) { fail(e); $$('[data-a]').forEach(b => b.disabled = false); }
+    if (S.view === 'home') renderHome(el);
+  } catch (e) { S.punching = false; S.today = prev; S.fetchedAt = prevAt; if (S.view === 'home') renderHome(el); fail(e); }
 }
 function pickProject(title, cb, current) {
   const list = S.boot.projects;
@@ -1457,12 +1516,23 @@ window.addEventListener('popstate', e => { if (S.boot && $('#main')) { go((e.sta
   if (!S.token) { S.token = sess.get('token'); S.shared = !!S.token; }
   if (!S.token) return viewLogin();
   startIdle();
-  try {
-    S.boot = await call('bootstrap');
-    setToday(S.boot.today);
+  let cached = null;
+  try { cached = JSON.parse(cStore().get('boot') || 'null'); } catch (e) {}
+  if (cached && cached.tok === S.token.slice(-12) && cached.d && cached.d.user) {
+    S.boot = cached.d;
+    if (S.boot.today && S.boot.today.date === localDate()) { S.today = S.boot.today; S.fetchedAt = cached.t; }
     renderShell();
+  }
+  try {
+    const b = await callNet('bootstrap');
+    const changed = !cached || JSON.stringify(b) !== JSON.stringify(cached.d);
+    S.boot = b;
+    try { cStore().set('boot', JSON.stringify({ t: Date.now(), tok: S.token.slice(-12), d: b })); } catch (e) {}
+    if (!cached) { setToday(b.today); renderShell(); }
+    else if (changed) { renderNav(); if (S.view === 'home' && !S.punching) { setToday(b.today); go('home'); } }
+    setTimeout(prefetch, 1500);
   } catch (e) {
-    if (S.token) viewLogin(e.message);
+    if (S.token && !cached) viewLogin(e.message);
   }
 })();
 </script>
