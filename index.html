@@ -456,7 +456,7 @@ const DAYS = ['neděle', 'pondělí', 'úterý', 'středa', 'čtvrtek', 'pátek'
 const DAYS_S = ['ne', 'po', 'út', 'st', 'čt', 'pá', 'so'];
 const MONTHS = ['leden', 'únor', 'březen', 'duben', 'květen', 'červen', 'červenec', 'srpen', 'září', 'říjen', 'listopad', 'prosinec'];
 const ABS_STATUS = { CEKA: ['Čeká', 'warn'], SCHVALENO: ['Schváleno', 'ok'], ZAMITNUTO: ['Zamítnuto', 'bad'], ZRUSENO: ['Zrušeno', ''] };
-const FLAGS = { late: ['Pozdní příchod', 'warn'], early: ['Dřívější odchod', 'warn'], missingOut: ['Chybí odchod', 'bad'], autoBreak: ['Auto přestávka', 'info'] };
+const FLAGS = { late: ['Pozdní příchod', 'warn'], early: ['Dřívější odchod', 'warn'], missingOut: ['Chybí odchod', 'bad'], autoBreak: ['Auto přestávka', 'info'], carryIn: ['Pokračování směny z předchozího dne', 'info'], carryOut: ['Směna přes půlnoc', 'info'] };
 const STATE = { IN: ['V práci', 'ok'], BREAK: ['Přestávka', 'warn'], OUT: ['Mimo práci', ''] };
 const HIST = { punch: 'Zaznamenáno', add: 'Přidáno ručně', edit: 'Upraveno', 'delete': 'Smazáno', move: 'Přesunuto z jiného dne', 'punch-offline': 'Terminál (offline)', note: 'Poznámka k projektu' };
 
@@ -794,7 +794,7 @@ function renderHome(el) {
         (t.projectNote ? '<div class="pnote">„' + esc(t.projectNote) + '“</div>' : '')
       : '<div class="pn">—</div>') + '</div>' +
     '<div class="wcols"><div class="wcol">' +
-    '<div class="wi"><span>Příchod</span><b>' + (t.firstIn !== null ? hm(t.firstIn) : '—') + '</b></div>' +
+    '<div class="wi"><span>Příchod</span><b>' + (t.shiftStart ? esc(t.shiftStart.time) + ' <small class="muted">(' + (t.shiftStart.date === t.date ? 'dnes' : DAYS[new Date(t.shiftStart.date + 'T12:00:00').getDay()]) + ')</small>' : t.firstIn !== null ? hm(t.firstIn) : '—') + '</b></div>' +
     '<div class="wi"><span>Odchod</span><b>' + (t.state === 'OUT' && t.lastOut !== null && t.lastOut !== undefined ? hm(t.lastOut) : '—') + '</b></div>' +
     '</div><div class="wcol">' +
     '<div class="wi"><span>Čas na projektu</span><b id="pmin">' + (t.state !== 'OUT' ? dur(t.projectMin) : '—') + '</b></div>' +
@@ -805,7 +805,7 @@ function renderHome(el) {
     '<div class="card hrec"><div class="hrh"><h2>Dnešní záznamy</h2><button class="btn sm" id="dd">Detail / oprava dne</button></div>' + (t.events.length ? '<ul class="timeline">' + t.events.map(e =>
       '<li><span class="dot ' + e.type + '"></span><span class="tm">' + esc(e.time) + (e.origTime ? '<span class="otm">(' + esc(e.origTime) + ')</span>' : '') + '</span><span class="tlx">' + esc(s.eventTypes[e.type]) +
       (e.type === 'IN' ? ' <span class="muted">· ' + pdot(e.projectId) + esc(projLabel(e.projectId, true)) + '</span>' : '') + '</span></li>').join('') + '</ul>'
-      : '<div class="muted">Zatím žádné záznamy.</div>') +
+      : '<div class="muted">' + (t.shiftStart ? 'Směna pokračuje od ' + esc(t.shiftStart.time) + ' (' + DAYS[new Date(t.shiftStart.date + 'T12:00:00').getDay()] + ').' : 'Zatím žádné záznamy.') + '</div>') +
     '</div>' +
     '<div class="home-foot">Remoza-docházka · powered by MM</div>' +
     '</div>';
@@ -1194,10 +1194,10 @@ VIEWS.projects = async function (el) {
   S.boot.projects = list.filter(p => p.active);
   el.innerHTML = '<div class="row" style="margin-bottom:16px"><h1 style="margin:0">Projekty</h1><div class="spacer"></div><button class="btn primary" id="np">Nový projekt</button></div>' +
     '<div class="tbl-wrap rwrap"><table class="rtbl"><thead><tr><th>Zkratka</th><th>Název</th><th>Čas</th><th>Stav</th><th></th></tr></thead><tbody>' +
-    (list.length ? list.map(p => '<tr' + (p.active ? '' : ' class="off"') + '><td class="rt">' + pdot(p.id) + '<b>' + esc(p.code) + '</b><span class="rbadge">' + (p.active ? badge('Aktivní', 'ok') : badge('Neaktivní')) + '</span></td><td data-label="Název"><span class="rv">' + esc(p.name) + '</span></td><td class="num" data-label="Čas">' + (p.start || p.end ? esc(p.start) + '–' + esc(p.end) : '') + '</td><td class="rhide">' + (p.active ? badge('Aktivní', 'ok') : badge('Neaktivní')) + '</td><td class="ract"><button class="btn sm" data-p="' + esc(p.id) + '">Upravit</button></td></tr>').join('')
+    (list.length ? list.map(p => '<tr' + (p.active ? '' : ' class="off"') + '><td class="rt">' + pdot(p.id) + '<b>' + esc(p.code) + '</b><span class="rbadge">' + (p.active ? badge('Aktivní', 'ok') : badge('Neaktivní')) + '</span></td><td data-label="Název"><span class="rv">' + esc(p.name) + '</span></td><td class="num" data-label="Čas">' + (p.start || p.end ? esc(p.start) + '–' + esc(p.end) : '') + (p.overnight ? ' ' + badge('přes půlnoc', 'info') : '') + '</td><td class="rhide">' + (p.active ? badge('Aktivní', 'ok') : badge('Neaktivní')) + '</td><td class="ract"><button class="btn sm" data-p="' + esc(p.id) + '">Upravit</button></td></tr>').join('')
       : '<tr><td colspan="5" class="empty">Zatím žádné projekty. Pracovníci mohou zatím zadávat „Bez projektu“.</td></tr>') + '</tbody></table></div>';
   const form = p => {
-    p = p || { id: '', code: '', name: '', active: true, color: '', start: '', end: '' };
+    p = p || { id: '', code: '', name: '', active: true, color: '', start: '', end: '', overnight: false };
     const usedC = list.filter(x => x.active && x.id !== p.id).map(x => x.color);
     const col = p.color || PCOLORS.filter(c => usedC.indexOf(c) < 0)[0] || PCOLORS[0];
     const m = openModal(p.id ? 'Upravit projekt' : 'Nový projekt', '<form id="pf" class="grid2"><label class="f">Zkratka (zobrazuje se pracovníkům)<input name="code" required maxlength="20" value="' + esc(p.code) + '"></label>' +
@@ -1205,11 +1205,12 @@ VIEWS.projects = async function (el) {
       '<label class="f">Začátek (nabídne se u příchodu)<input name="start" type="time" value="' + esc(p.start) + '"></label>' +
       '<label class="f">Konec (nabídne se u odchodu)<input name="end" type="time" value="' + esc(p.end) + '"></label>' +
       '<div class="f" style="grid-column:1/-1"><span>Barva projektu</span><div class="swatches">' + PCOLORS.map(c => '<label class="sw" style="--pc:' + c + '" title="' + c + (usedC.indexOf(c) >= 0 ? ' (už použitá)' : '') + '"><input type="radio" name="color" value="' + c + '"' + (c === col ? ' checked' : '') + '><i></i></label>').join('') + '</div></div>' +
+      '<label style="grid-column:1/-1;display:flex;flex-wrap:nowrap;align-items:flex-start;gap:10px;cursor:pointer"><input type="checkbox" name="overnight"' + (p.overnight ? ' checked' : '') + ' style="margin-top:3px;flex:none"> <span style="min-width:0">Směna přes půlnoc<br><small class="muted">Směna o půlnoci nekončí (max. 32 h), čas se rozdělí do dnů a počítá se jedna přestávka za směnu. Pokud odchod do 32 h nepřijde, den se uzavře jako „chybí odchod“.</small></span></label>' +
       (p.id ? '<label class="row" style="grid-column:1/-1"><input type="checkbox" name="active"' + (p.active ? ' checked' : '') + '> Aktivní (nabízí se v seznamu)</label>' : '') +
       '<div class="row" style="grid-column:1/-1"><button class="btn primary" type="submit">Uložit</button><button class="btn" type="button" data-close>Zavřít</button></div></form>');
     $('#pf', m).onsubmit = async e => {
       e.preventDefault(); const f = e.target;
-      try { await call('saveProject', { id: p.id, code: f.code.value, name: f.name.value, start: f.start.value, end: f.end.value, color: (f.querySelector('input[name=color]:checked') || {}).value || '', active: f.active ? f.active.checked : true }); closeModal(); toast('Projekt uložen'); VIEWS.projects(el); } catch (err) { fail(err); }
+      try { await call('saveProject', { id: p.id, code: f.code.value, name: f.name.value, start: f.start.value, end: f.end.value, overnight: f.overnight.checked, color: (f.querySelector('input[name=color]:checked') || {}).value || '', active: f.active ? f.active.checked : true }); closeModal(); toast('Projekt uložen'); VIEWS.projects(el); } catch (err) { fail(err); }
     };
   };
   $('#np', el).onclick = () => form();
