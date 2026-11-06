@@ -368,9 +368,10 @@ tfoot td { font-weight: 650; background: var(--surface-2); }
   .topbar { padding-top: 6px; padding-bottom: 6px; min-height: 53px; }
   .home .clock-box, .home .home-head { display: none; }
   .home .wbox { margin-top: 0; }
-  /* domovská obrazovka na jednu obrazovku telefonu */
-  .main:has(> .home) { padding: 10px 12px 8px; }
-  .home { display: flex; flex-direction: column; min-height: calc(100dvh - 53px - 18px); }
+  /* domovská obrazovka na jednu obrazovku telefonu – stránka se neposouvá, scrolluje se jen seznam záznamů */
+  .shell { min-height: 100dvh; }
+  .main:has(> .home) { height: calc(100dvh - 53px); overflow: hidden; box-sizing: border-box; padding: 10px 12px 8px; }
+  .home { display: flex; flex-direction: column; height: 100%; min-height: 0; }
   .hstats .stats.tstats { margin-bottom: 8px; gap: 6px; }
   .hstats .stat { padding: 5px 2px; }
   .hstats .stat .v { font-size: 18px; line-height: 1.15; }
@@ -981,7 +982,7 @@ function renderHome(el) {
     '</div></div>' + (t.absences.length ? '<div style="margin-top:10px">' + t.absences.map(a => badge(a.label, 'info')).join(' ') + '</div>' : '') + '</div>' +
     '<div class="actions">' + btns + '</div>' +
 
-    '<div class="card hrec"><div class="hrh"><h2>Dnešní záznamy</h2><button class="btn sm" id="dd">Detail / oprava dne</button></div>' + (t.events.length ? '<ul class="timeline">' + t.events.map(e =>
+    '<div class="card hrec"><div class="hrh"><h2>Dnešní záznamy</h2><button class="btn sm" id="dd">' + (t.canEdit ? 'Detail / oprava dne' : 'Detail dne') + '</button></div>' + (t.events.length ? '<ul class="timeline">' + t.events.map(e =>
       '<li><span class="dot ' + e.type + '"></span><span class="tm">' + esc(e.time) + (e.origTime ? '<span class="otm">(' + esc(e.origTime) + ')</span>' : '') + '</span><span class="tlx">' + esc(s.eventTypes[e.type]) +
       (e.type === 'IN' ? ' <span class="muted">· ' + pdot(e.projectId) + esc(projLabel(e.projectId, true)) + '</span>' : '') + '</span></li>').join('') + '</ul>'
       : '<div class="muted">' + (t.shiftStart ? 'Směna pokračuje od ' + esc(t.shiftStart.time) + ' (' + DAYS[new Date(t.shiftStart.date + 'T12:00:00').getDay()] + ').' : 'Zatím žádné záznamy.') + '</div>') +

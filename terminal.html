@@ -368,9 +368,10 @@ tfoot td { font-weight: 650; background: var(--surface-2); }
   .topbar { padding-top: 6px; padding-bottom: 6px; min-height: 53px; }
   .home .clock-box, .home .home-head { display: none; }
   .home .wbox { margin-top: 0; }
-  /* domovská obrazovka na jednu obrazovku telefonu */
-  .main:has(> .home) { padding: 10px 12px 8px; }
-  .home { display: flex; flex-direction: column; min-height: calc(100dvh - 53px - 18px); }
+  /* domovská obrazovka na jednu obrazovku telefonu – stránka se neposouvá, scrolluje se jen seznam záznamů */
+  .shell { min-height: 100dvh; }
+  .main:has(> .home) { height: calc(100dvh - 53px); overflow: hidden; box-sizing: border-box; padding: 10px 12px 8px; }
+  .home { display: flex; flex-direction: column; height: 100%; min-height: 0; }
   .hstats .stats.tstats { margin-bottom: 8px; gap: 6px; }
   .hstats .stat { padding: 5px 2px; }
   .hstats .stat .v { font-size: 18px; line-height: 1.15; }
