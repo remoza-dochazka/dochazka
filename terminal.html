@@ -435,10 +435,22 @@ tfoot td { font-weight: 650; background: var(--surface-2); }
   .rtbl td.ract:empty { display: none; }
   .rtbl td.empty { text-align: center; }
   .mcard .tc1, .mcard .tnm { text-align: left; justify-content: flex-start; }
-  .mcard.nodata .tc1 { margin: 0; }
-  .mcard.nodata { padding-top: 8px; padding-bottom: 8px; }
   .mcard.off { opacity: .7; }
   .mcard.today { box-shadow: inset 4px 0 0 var(--primary); }
+  /* úzký proužek dne; po klepnutí se rozbalí podrobnosti */
+  .mcard { padding: 0; cursor: default; }
+  .mstrip { display: flex; align-items: center; gap: 10px; padding: 11px 14px; cursor: pointer; }
+  .mstrip .tnm { flex: 1 1 auto; font-size: 15px; }
+  .mstrip .mtimes { flex: none; font-variant-numeric: tabular-nums; font-size: 15px; }
+  .mstrip .mwork { flex: none; font-weight: 650; font-variant-numeric: tabular-nums; min-width: 48px; text-align: right; }
+  .mstrip .mchev { flex: none; display: grid; place-items: center; color: var(--muted); }
+  .mstrip .mchev svg { width: 18px; height: 18px; transition: transform .18s; }
+  .mcard.open .mstrip .mchev svg { transform: rotate(180deg); }
+  .mdet { display: none; padding: 0 14px 12px; }
+  .mcard.open .mdet { display: block; }
+  .mdet .tcg { margin-top: 0; }
+  .mtags { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .mdbtn { margin-top: 10px; width: 100%; justify-content: center; }
 }
 @media (max-width: 860px) and (prefers-color-scheme: dark) {
   .rtbl tr { border-color: rgba(255,107,53,.45); }
