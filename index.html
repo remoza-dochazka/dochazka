@@ -119,6 +119,16 @@ a { color: var(--link); }
 .bseg button { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; min-height: 36px; padding: 6px 4px; border: none; border-radius: 7px; background: none; color: inherit; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
 .bseg button.on { background: var(--primary); color: var(--primary-ink); font-weight: 650; }
 .bseg button:disabled { opacity: .8; }
+.geogate { position: fixed; inset: 0; z-index: 150; background: var(--bg); overflow-y: auto; display: flex; align-items: center; justify-content: center; padding: 24px 16px; }
+.geogate-in { max-width: 420px; width: 100%; text-align: left; }
+.geogate-in h2 { font-size: 22px; margin: 6px 0 12px; }
+.geogate-in p, .geogate-in li { line-height: 1.5; }
+.geogate-in ol { padding-left: 20px; margin: 0 0 16px; }
+.geogate-in ol li { margin-bottom: 6px; }
+.geogate-ic { width: 56px; height: 56px; border-radius: 16px; display: grid; place-items: center; background: var(--primary); color: var(--primary-ink); }
+.geogate-ic svg { width: 30px; height: 30px; }
+.geogate-in .btn.primary { width: 100%; min-height: 48px; justify-content: center; margin-top: 8px; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+.geogate-in .btn.link { width: 100%; margin-top: 10px; background: none; border: none; color: var(--muted); text-decoration: underline; justify-content: center; }
 .bspin { width: 15px; height: 15px; flex: none; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
 .seg button { border: none; background: var(--surface); padding: 7px 14px; cursor: pointer; }
@@ -198,6 +208,11 @@ tfoot td { font-weight: 650; background: var(--surface-2); }
 .stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; }
 .stat .v { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
 .stat .l { font-size: 12px; color: var(--muted); }
+/* detail dne: tři souhrny vedle sebe, nízké */
+.stats.dstats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+.stats.dstats .stat { padding: 6px 8px; text-align: center; }
+.stats.dstats .stat .v { font-size: 18px; line-height: 1.2; }
+.stats.dstats .stat .l { font-size: 11px; line-height: 1.2; }
 .empty { padding: 30px; text-align: center; color: var(--muted); }
 
 /* home */
@@ -669,6 +684,7 @@ function endSplash() {
 
 const ICONS = {
   home: '<path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
+  pin: '<path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   cal: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4M9 15l2 2 4-4"/>',
   table: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/>',
@@ -779,12 +795,67 @@ function navItems() {
   items.push({ sec: 'Účet' }, { id: 'profile', label: 'Můj účet', icon: 'user' });
   return items;
 }
+/* ---------- povinná poloha: zaměstnance bez povolené polohy aplikace nepustí dál ---------- */
+const GEO = { st: 'ok', perm: null, busy: false };
+function geoForced() { const s = S.boot && S.boot.settings; return !!(s && s.geoMode !== 'off' && s.geoForce !== false && !isMgr() && S.token); }
+function isIOS() { return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); }
+// zjistí stav: ok | prompt | denied | off (GPS v telefonu vypnutá) | none (prohlížeč polohu neumí)
+async function geoCheck(probe) {
+  if (!geoForced()) return 'ok';
+  if (!navigator.geolocation) return 'none';
+  let st = null;
+  try { if (navigator.permissions) { const p = await navigator.permissions.query({ name: 'geolocation' }); st = p.state; if (!GEO.perm) { GEO.perm = p; p.onchange = () => geoGate(true); } } } catch (e) {}
+  if (st === 'prompt') return 'prompt';
+  if (st === 'denied') return 'denied';
+  if (st === 'granted' && !probe) return 'ok';
+  // bez Permissions API (starší iPhone) nebo kontrola, že poloha v telefonu není vypnutá
+  return await new Promise(res => {
+    let done = false; const fin = v => { if (!done) { done = true; res(v); } };
+    setTimeout(() => fin(st === 'granted' ? 'ok' : 'prompt'), 16000);
+    try {
+      navigator.geolocation.getCurrentPosition(() => fin('ok'), e => fin(e.code === 1 ? 'denied' : e.code === 2 ? 'off' : 'ok'),
+        { enableHighAccuracy: false, maximumAge: 10 * 60000, timeout: 15000 });
+    } catch (e) { fin('ok'); }
+  });
+}
+async function geoGate(probe) {
+  if (GEO.busy) return; GEO.busy = true;
+  try { GEO.st = await geoCheck(probe); } finally { GEO.busy = false; }
+  renderGeoGate();
+}
+function renderGeoGate() {
+  let g = document.getElementById('geogate');
+  if (GEO.st === 'ok' || !geoForced()) { if (g) { g.remove(); toast('Poloha povolena'); } return; }
+  if (!g) { g = document.createElement('div'); g.id = 'geogate'; g.className = 'geogate'; document.body.appendChild(g); }
+  const ios = isIOS();
+  const how = GEO.st === 'prompt' ? '<p>Docházka u příchodu a odchodu zaznamená místo, aby se to nemuselo řešit ručně. Mezitím polohu nesleduje.</p><p>Klepněte na <b>Povolit polohu</b> a potom v dotazu telefonu zvolte <b>Povolit</b>' + (ios ? ' (případně „Při používání aplikace“)' : '') + '.</p>'
+    : GEO.st === 'off' ? '<p>V telefonu je <b>vypnutá poloha (GPS)</b>.</p><p>' + (ios ? 'Nastavení → Soukromí a zabezpečení → <b>Polohové služby</b> → zapnout.' : 'Stáhněte horní lištu a zapněte <b>Polohu</b>.') + '</p><p>Potom klepněte na <b>Zkontrolovat znovu</b>.</p>'
+    : GEO.st === 'none' ? '<p>Tento prohlížeč neumí zjistit polohu. Otevřete docházku v ' + (ios ? 'Safari' : 'Chrome') + '.</p>'
+    : '<p>Poloha je pro docházku <b>zakázaná</b>. Bez ní ji nelze používat. Povolte ji takto:</p>' + (ios
+      ? '<ol><li>Nastavení → Soukromí a zabezpečení → <b>Polohové služby</b> → zapnout.</li><li>Ve stejném seznamu níže <b>Safari – webové stránky</b> → <b>Při používání aplikace</b>.</li><li>Nastavení → Safari → <b>Poloha</b> → <b>Zeptat se</b> nebo <b>Povolit</b>.</li><li>Vraťte se sem a klepněte na <b>Zkontrolovat znovu</b>.</li></ol>'
+      : '<ol><li>V Chrome klepněte na ikonu vedle adresy (zámek / posuvníky) → <b>Oprávnění</b> → <b>Poloha</b> → <b>Povolit</b>.</li><li>Pokud docházku spouštíte z ikony na ploše: Nastavení telefonu → Aplikace → <b>Chrome</b> → Oprávnění → <b>Poloha</b> → Povolit.</li><li>Zapněte také <b>Polohu</b> v horní liště telefonu.</li><li>Vraťte se sem a klepněte na <b>Zkontrolovat znovu</b>.</li></ol>');
+  g.innerHTML = '<div class="geogate-in"><div class="geogate-ic">' + icon('pin') + '</div><h2>Povolte polohu</h2>' + how +
+    '<button class="btn primary" id="ggo">' + (GEO.st === 'prompt' ? 'Povolit polohu' : 'Zkontrolovat znovu') + '</button>' +
+    '<button class="btn link" id="gglo">Odhlásit se</button></div>';
+  $('#gglo', g).onclick = () => { g.remove(); doLogout(false); };
+  $('#ggo', g).onclick = () => {
+    const b = $('#ggo', g); b.disabled = true; b.innerHTML = '<span class="bspin"></span>Zjišťuji polohu…';
+    try {
+      navigator.geolocation.getCurrentPosition(() => { GEO.st = 'ok'; renderGeoGate(); },
+        e => { GEO.st = e.code === 1 ? 'denied' : e.code === 2 ? 'off' : 'ok'; renderGeoGate(); },
+        { enableHighAccuracy: false, maximumAge: 10 * 60000, timeout: 15000 });
+    } catch (e) { geoGate(true); }
+  };
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && geoForced()) geoGate(true); });
+
 /* jednorázově po přihlášení: požádat o povolení polohy, aby se pak už nikdy neptalo při pípnutí */
 async function askGeoOnce() {
+  if (geoForced()) return geoGate(true);
   try {
     if (!S.boot || S.boot.settings.geoMode === 'off' || !navigator.geolocation || store.get('geoAsked')) return;
     if (navigator.permissions) { const p = await navigator.permissions.query({ name: 'geolocation' }); if (p.state !== 'prompt') { store.set('geoAsked', '1'); return; } }
-    const ok = await askConfirm('Povolit polohu', '<p>Po klepnutí na Povolit potvrďte dotaz telefonu. Dál už se aplikace ptát nebude.</p>', 'Povolit');
+    const ok = await askConfirm('Povolit polohu', '<p>Docházka u příchodu a odchodu zaznamená místo, aby se to nemuselo řešit ručně. Mezitím polohu nesleduje.</p><p>Klepněte na Povolit a potom potvrďte dotaz telefonu.</p>', 'Povolit');
     store.set('geoAsked', '1');
     if (ok) navigator.geolocation.getCurrentPosition(() => toast('Poloha povolena'), () => {}, { timeout: 15000 });
   } catch (e) {}
@@ -801,7 +872,8 @@ function renderShell() {
   $('#hb').onclick = () => go('home');
   renderNav(); renderThemeSw();
   go(S.view || 'home');
-  setTimeout(askGeoOnce, 1500);
+  if (geoForced()) geoGate(false).then(() => { if (GEO.st === 'ok') geoGate(true); });
+  else setTimeout(askGeoOnce, 1500);
 }
 function renderNav() {
   $('#nav').innerHTML = navItems().map(i => i.sec ? '<div class="nav-sec">' + esc(i.sec) + '</div>' :
@@ -1026,8 +1098,8 @@ function renderDay(m, d, onChange) {
   $('.modal-h h2').textContent = DAYS[d.weekday].replace(/^./, x => x.toUpperCase()) + ' ' + czDate(d.date) + ' – ' + d.user.name;
   const projRows = Object.keys(c.projects).map(p => '<tr><td class="pj" title="' + esc(projLabel(p)) + '">' + pdot(p) + esc(projLabel(p)) + '</td><td class="num">' + hm(c.projects[p].start) + '</td><td class="num">' + (c.projects[p].open ? '…' : hm(c.projects[p].end)) + '</td><td class="num">' + dur(c.projects[p].min) + '</td></tr>').join('');
   m.innerHTML =
-    '<div class="stats"><div class="stat"><div class="v">' + dur(c.netMin) + '</div><div class="l">Práce (čistá)</div></div>' +
-    '<div class="stat"><div class="v">' + dur(c.breakMin) + '</div><div class="l">Přestávky' + (c.breakSet !== null && c.breakSet !== undefined ? ' (nastaveno)' : c.autoBreakMin ? ' (auto ' + c.autoBreakMin + ' min)' : '') + '</div></div>' +
+    '<div class="stats dstats"><div class="stat"><div class="v">' + dur(c.netMin) + '</div><div class="l">Práce (čistá)</div></div>' +
+    '<div class="stat"><div class="v">' + dur(c.breakMin) + '</div><div class="l">Přestávky</div></div>' +
     '<div class="stat"><div class="v">' + dur(d.fundMin) + '</div><div class="l">Fond dne</div></div></div>' +
     breakSetHtml(d) +
     (d.flags.length || d.absences.length || d.holiday ? '<div style="margin-bottom:12px">' + (d.holiday ? badge('Státní svátek', 'info') + ' ' : '') + d.absences.map(a => badge(a.label + ' ' + dur(a.min), 'info')).join(' ') + ' ' + flagBadges(d.flags) + '</div>' : '') +
@@ -1526,6 +1598,7 @@ VIEWS.settings = async function (el) {
     '<div class="card"><h2>Poloha (GPS)</h2><div class="grid2"><label class="f">Režim<select name="geoMode">' +
     [['off', 'Vypnuto'], ['record', 'Zaznamenat polohu při příchodu, změně projektu a odchodu'], ['require', 'Vyžadovat polohu v okruhu pracoviště (příchod, změna projektu, odchod)']].map(o => '<option value="' + o[0] + '"' + (s.geoMode === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select></label>' +
     fld('geoRadius', 'Okruh (metry)', 'number', 'min="20"') + fld('geoLat', 'Zeměpisná šířka pracoviště') + fld('geoLng', 'Zeměpisná délka pracoviště') + '</div>' +
+    '<div style="margin-top:10px">' + chk('geoForce', 'Zaměstnance bez povolené polohy v telefonu nepustit do aplikace (dokud polohu nepovolí)') + '</div>' +
     '<div class="row" style="margin-top:8px"><button type="button" class="btn sm" id="gp">Použít moji aktuální polohu</button></div>' +
     '<p class="muted small">Poloha se ukládá jen v okamžiku záznamu příchodu/odchodu. Zaměstnance o tom informujte (GDPR).</p></div>' +
     '<div class="card"><h2>Terminál na pracovišti</h2><div class="grid2">' + fld('terminalKey', 'Klíč terminálu', 'text', 'minlength="8"') + '</div>' +
