@@ -197,7 +197,12 @@ th.sort.on .sarr { opacity: 1; color: #FF6B35; }
 }
 tr.click:hover td { background: var(--surface-2); }
 tr.off td { background: color-mix(in srgb, var(--surface-2) 70%, transparent); color: var(--muted); }
-tr.today td { box-shadow: inset 3px 0 0 var(--primary); }
+/* víkend (oranžová) a svátek (zelená) – barevné odlišení řádku v tabulce přehledu */
+tr.off:not(.hol) td { background: color-mix(in srgb, #FF6B35 8%, transparent); }
+tr.off:not(.hol) td:first-child { box-shadow: inset 3px 0 0 #FF6B35; }
+tr.hol td { background: color-mix(in srgb, #1a9e5c 10%, transparent); color: var(--text); }
+tr.hol td:first-child { box-shadow: inset 3px 0 0 #1a9e5c; }
+tr.today td { box-shadow: inset 3px 0 0 #2563eb; }
 tfoot td { font-weight: 650; background: var(--surface-2); }
 .hstats { cursor: pointer; min-height: 10px; }
 .hstats .stats { margin: 0 0 16px; }
@@ -436,7 +441,10 @@ tfoot td { font-weight: 650; background: var(--surface-2); }
   .rtbl td.empty { text-align: center; }
   .mcard .tc1, .mcard .tnm { text-align: left; justify-content: flex-start; }
   .mcard.off { opacity: .7; }
-  .mcard.today { box-shadow: inset 4px 0 0 var(--primary); }
+  /* víkend (oranžová) a svátek (zelená) – výrazné barevné ohraničení */
+  .mcard.off:not(.hol) { opacity: 1; border-color: rgba(255,107,53,.7); background: color-mix(in srgb, #FF6B35 7%, var(--surface)); }
+  .mcard.hol { opacity: 1; border-color: rgba(26,158,92,.75); background: color-mix(in srgb, #1a9e5c 9%, var(--surface)); }
+  .mcard.today { box-shadow: inset 4px 0 0 #2563eb; }
   /* úzký proužek dne; po klepnutí se rozbalí podrobnosti */
   .mcard { padding: 0; cursor: default; }
   .mstrip { display: flex; align-items: center; gap: 10px; padding: 11px 14px; cursor: pointer; }
@@ -669,6 +677,15 @@ function toast(msg, err) {
   $('#toast').appendChild(t); setTimeout(() => t.remove(), err ? 5000 : 2800);
 }
 function fail(e) { toast(e && e.message ? e.message : String(e), true); }
+/* na tlačítku ukáže čekací kolečko po dobu serverové akce a zabrání dvojímu kliknutí; při chybě tlačítko obnoví */
+async function runBtn(b, fn) {
+  if (!b || b.classList.contains('busy')) return;
+  const oh = b.innerHTML, od = b.disabled, ic = /\bicon\b/.test(b.className), txt = b.textContent.trim();
+  b.classList.add('busy'); b.disabled = true;
+  b.innerHTML = '<span class="bspin"></span>' + (ic ? '' : ' ' + esc(txt));
+  try { return await fn(); }
+  catch (e) { b.classList.remove('busy'); b.disabled = od; b.innerHTML = oh; fail(e); }
+}
 // po startu aplikace zůstává na obrazovce logo (#splash), dokud není připravený první obsah; pak se roztříští
 function loading(el) { el.innerHTML = S.starting ? '' : '<div class="loading"><div class="spinner"></div></div>'; }
 function endSplash() {
@@ -1023,13 +1040,10 @@ function editProjectNote(t, el) {
     '<div class="row end" style="gap:8px"><button class="btn" type="button" data-close>Zavřít</button><button class="btn primary" id="nsv">Uložit</button></div>');
   const ta = $('#ntx', m), cnt = () => $('#ncnt', m).textContent = ta.value.length + ' / 200';
   ta.oninput = cnt; cnt(); ta.focus();
-  $('#nsv', m).onclick = async () => {
-    const b = $('#nsv', m); b.disabled = true;
-    try {
-      const nt = await call('projectNote', { note: ta.value });
-      setToday(nt); closeModal(); toast(ta.value.trim() ? 'Poznámka uložena' : 'Poznámka smazána'); renderHome(el);
-    } catch (e) { fail(e); b.disabled = false; }
-  };
+  $('#nsv', m).onclick = () => runBtn($('#nsv', m), async () => {
+    const nt = await call('projectNote', { note: ta.value });
+    setToday(nt); closeModal(); toast(ta.value.trim() ? 'Poznámka uložena' : 'Poznámka smazána'); renderHome(el);
+  });
 }
 function homeAction(a, el) {
   if (a === 'IN' || a === 'CHANGE') {
@@ -1188,7 +1202,10 @@ function renderDay(m, d, onChange) {
         (ev.note ? '<div class="small muted">' + esc(ev.note) + '</div>' : '') + '</div></div>' +
         '<div class="small muted">' + esc(d.user.name || '') + ' · ' + czDate(d.date) + '</div>';
       if (!await askConfirm('Smazat záznam?', det, 'Smazat', true)) return;
-      try { const nd = await call('deleteEvent', { id: b.dataset.del }); toast('Smazáno'); renderDay(m, nd, onChange); if (onChange) onChange(); } catch (err) { fail(err); }
+      if (b.classList.contains('busy')) return;
+      const oh = b.innerHTML; b.classList.add('busy'); b.disabled = true; b.innerHTML = '<span class="bspin"></span>';
+      try { const nd = await call('deleteEvent', { id: b.dataset.del }); toast('Smazáno'); renderDay(m, nd, onChange); if (onChange) onChange(); }
+      catch (err) { b.classList.remove('busy'); b.disabled = false; b.innerHTML = oh; fail(err); }
     });
   }
 }
@@ -1255,7 +1272,7 @@ function monthTable(md) {
     const c = d.calc;
     const br = c.breaks.filter(b => b.end > b.start).map(b => hm(b.start) + '–' + hm(b.end)).join(', ');
     const pr = Object.keys(c.projects).map(p => '<span class="badge pbadge" style="--pc:' + projColor(p) + '">' + esc(projLabel(p, true)) + ' ' + dur(c.projects[p].min) + '</span>').join(' ');
-    return '<tr class="click' + (!d.workday ? ' off' : '') + (d.isToday ? ' today' : '') + '" data-date="' + d.date + '">' +
+    return '<tr class="click' + (!d.workday ? ' off' : '') + (d.holiday ? ' hol' : '') + (d.isToday ? ' today' : '') + '" data-date="' + d.date + '">' +
       '<td class="num"><b>' + DAYS_S[d.weekday] + '</b> ' + d.date.slice(8) + '. ' + (+d.date.slice(5, 7)) + '.</td>' +
       '<td class="num">' + hm(c.firstIn) + '</td><td class="num">' + (c.lastOut !== null ? hm(c.lastOut) : (c.state !== 'OUT' && d.isToday ? '…' : '')) + '</td>' +
       '<td class="num small">' + esc(br) + (c.autoBreakMin ? ' <span class="muted">+auto ' + c.autoBreakMin + '</span>' : '') + '</td>' +
@@ -1270,7 +1287,7 @@ function monthTable(md) {
     // úzký proužek: jen časy; po klepnutí se rozbalí všechny podrobnosti
     const strip = has ? '<span class="mtimes">' + (hm(c.firstIn) || '—') + ' – ' + out + '</span><span class="mwork">' + (c.netMin ? dur(c.netMin) : '') + '</span>'
       : (d.holiday || d.absences.length ? '<span class="mtimes muted">' + (d.holiday ? 'Svátek' : esc(d.absences[0].label)) + '</span>' : '<span class="mtimes muted">—</span>');
-    return '<div class="tcard mcard' + (!d.workday ? ' off' : '') + (d.isToday ? ' today' : '') + (has ? '' : ' nodata') + '">' +
+    return '<div class="tcard mcard' + (!d.workday ? ' off' : '') + (d.holiday ? ' hol' : '') + (d.isToday ? ' today' : '') + (has ? '' : ' nodata') + '">' +
       '<div class="mstrip"><span class="tnm"><b>' + DAYS_S[d.weekday] + '</b> ' + (+d.date.slice(8)) + '. ' + (+d.date.slice(5, 7)) + '.</span>' + strip + '<span class="mchev">' + icon('chev') + '</span></div>' +
       '<div class="mdet">' +
       '<div class="tcg"><div><span>Příchod</span><b>' + (hm(c.firstIn) || '—') + '</b></div><div><span>Odchod</span><b>' + out + '</b></div><div><span>Přestávka</span><b>' + (c.breakMin ? dur(c.breakMin) : '—') + '</b></div><div><span>Práce</span><b>' + (c.netMin ? dur(c.netMin) : '—') + '</b></div></div>' +
@@ -1411,12 +1428,12 @@ VIEWS.absence = async function (el, p) {
     '<h2>Moje absence</h2><div class="tbl-wrap rwrap"><table class="rtbl">' + head + '<tbody>' + (r.list.length ? r.list.map(a => absRow(a)).join('') : '<tr><td colspan="7" class="empty">Žádné absence</td></tr>') + '</tbody></table></div>';
   $$('[data-y]', el).forEach(x => x.onclick = () => VIEWS.absence(el, { year: year + (+x.dataset.y) }));
   $('#na', el).onclick = () => absenceForm(() => VIEWS.absence(el, { year: year }));
-  $$('[data-ok],[data-no]', el).forEach(x => x.onclick = async () => {
-    try { await call('decideAbsence', { id: x.dataset.ok || x.dataset.no, approve: !!x.dataset.ok }); toast(x.dataset.ok ? 'Schváleno' : 'Zamítnuto'); VIEWS.absence(el, { year: year }); } catch (e) { fail(e); }
-  });
+  $$('[data-ok],[data-no]', el).forEach(x => x.onclick = () => runBtn(x, async () => {
+    await call('decideAbsence', { id: x.dataset.ok || x.dataset.no, approve: !!x.dataset.ok }); toast(x.dataset.ok ? 'Schváleno' : 'Zamítnuto'); VIEWS.absence(el, { year: year });
+  }));
   $$('[data-cn]', el).forEach(x => x.onclick = async () => {
     if (!await askConfirm('Zrušit tuto absenci?', '', 'Zrušit absenci', true)) return;
-    try { await call('cancelAbsence', { id: x.dataset.cn }); toast('Zrušeno'); VIEWS.absence(el, { year: year }); } catch (e) { fail(e); }
+    runBtn(x, async () => { await call('cancelAbsence', { id: x.dataset.cn }); toast('Zrušeno'); VIEWS.absence(el, { year: year }); });
   });
 };
 async function absenceForm(done) {
@@ -1552,16 +1569,16 @@ function userForm(u, users, el) {
   };
   if ($('#du', m)) $('#du', m).onclick = async () => {
     if (!await askConfirm('Smazat zaměstnance?', '<p><b>' + esc(u.name) + '</b></p><p class="small muted">Nebude se moct přihlásit a zmizí ze seznamů. Pokud má zapsanou docházku, zůstane uložená v databázi.</p>', 'Smazat', true)) return;
-    try {
+    runBtn($('#du', m), async () => {
       const r = await call('deleteUser', { email: u.email });
       S.users = r.users; closeModal();
       toast(r.archived ? 'Zaměstnanec smazán (docházka zůstává uložená)' : 'Zaměstnanec smazán');
       VIEWS.users(el);
-    } catch (err) { fail(err); }
+    });
   };
   if ($('#rp', m)) $('#rp', m).onclick = async () => {
     if (!await askConfirm('Nové dočasné heslo?', '<p>Pro <b>' + esc(u.name) + '</b>. Původní heslo přestane platit.</p>', 'Vygenerovat')) return;
-    try { const r = await call('resetPassword', { email: u.email }); showPassword(u.email, r.tempPassword); } catch (err) { fail(err); }
+    runBtn($('#rp', m), async () => { const r = await call('resetPassword', { email: u.email }); showPassword(u.email, r.tempPassword); });
   };
 }
 function showPassword(email, pw) {
