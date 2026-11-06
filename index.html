@@ -113,6 +113,12 @@ a { color: var(--link); }
 .btn svg { width: 20px; height: 20px; flex-shrink: 0; }
 .btn:disabled { opacity: .5; cursor: default; }
 .btn.busy:disabled { opacity: .85; cursor: progress; }
+.bset { margin: 0 0 14px; }
+.bset-l { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.bseg { display: flex; gap: 3px; padding: 3px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--border); margin-bottom: 6px; }
+.bseg button { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; min-height: 36px; padding: 6px 4px; border: none; border-radius: 7px; background: none; color: inherit; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.bseg button.on { background: var(--primary); color: var(--primary-ink); font-weight: 650; }
+.bseg button:disabled { opacity: .8; }
 .bspin { width: 15px; height: 15px; flex: none; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
 .seg button { border: none; background: var(--surface); padding: 7px 14px; cursor: pointer; }
@@ -465,7 +471,7 @@ const MONTHS = ['leden', 'únor', 'březen', 'duben', 'květen', 'červen', 'če
 const ABS_STATUS = { CEKA: ['Čeká', 'warn'], SCHVALENO: ['Schváleno', 'ok'], ZAMITNUTO: ['Zamítnuto', 'bad'], ZRUSENO: ['Zrušeno', ''] };
 const FLAGS = { late: ['Pozdní příchod', 'warn'], early: ['Dřívější odchod', 'warn'], missingOut: ['Chybí odchod', 'bad'], autoBreak: ['Auto přestávka', 'info'], carryIn: ['Pokračování směny z předchozího dne', 'info'], carryOut: ['Směna přes půlnoc', 'info'] };
 const STATE = { IN: ['V práci', 'ok'], BREAK: ['Přestávka', 'warn'], OUT: ['Mimo práci', ''] };
-const HIST = { punch: 'Zaznamenáno', add: 'Přidáno ručně', edit: 'Upraveno', 'delete': 'Smazáno', move: 'Přesunuto z jiného dne', 'punch-offline': 'Terminál (offline)', note: 'Poznámka k projektu' };
+const HIST = { breakSet: 'Přestávka za den', punch: 'Zaznamenáno', add: 'Přidáno ručně', edit: 'Upraveno', 'delete': 'Smazáno', move: 'Přesunuto z jiného dne', 'punch-offline': 'Terminál (offline)', note: 'Poznámka k projektu' };
 
 const S = { token: null, boot: null, view: 'home', today: null, fetchedAt: 0, tick: null, lastProject: null };
 
@@ -1021,8 +1027,9 @@ function renderDay(m, d, onChange) {
   const projRows = Object.keys(c.projects).map(p => '<tr><td class="pj" title="' + esc(projLabel(p)) + '">' + pdot(p) + esc(projLabel(p)) + '</td><td class="num">' + hm(c.projects[p].start) + '</td><td class="num">' + (c.projects[p].open ? '…' : hm(c.projects[p].end)) + '</td><td class="num">' + dur(c.projects[p].min) + '</td></tr>').join('');
   m.innerHTML =
     '<div class="stats"><div class="stat"><div class="v">' + dur(c.netMin) + '</div><div class="l">Práce (čistá)</div></div>' +
-    '<div class="stat"><div class="v">' + dur(c.breakMin) + '</div><div class="l">Přestávky' + (c.autoBreakMin ? ' (auto ' + c.autoBreakMin + ' min)' : '') + '</div></div>' +
+    '<div class="stat"><div class="v">' + dur(c.breakMin) + '</div><div class="l">Přestávky' + (c.breakSet !== null && c.breakSet !== undefined ? ' (nastaveno)' : c.autoBreakMin ? ' (auto ' + c.autoBreakMin + ' min)' : '') + '</div></div>' +
     '<div class="stat"><div class="v">' + dur(d.fundMin) + '</div><div class="l">Fond dne</div></div></div>' +
+    breakSetHtml(d) +
     (d.flags.length || d.absences.length || d.holiday ? '<div style="margin-bottom:12px">' + (d.holiday ? badge('Státní svátek', 'info') + ' ' : '') + d.absences.map(a => badge(a.label + ' ' + dur(a.min), 'info')).join(' ') + ' ' + flagBadges(d.flags) + '</div>' : '') +
     '<h2>Záznamy</h2><div class="tbl-wrap"><table class="ctbl"><colgroup><col class="' + (d.events.some(e => e.origTime) ? 'ctm2' : 'ctm') + '"><col style="width:36%"><col><col style="width:' + (d.canEdit ? 84 : 6) + 'px"></colgroup>' +
     '<thead><tr><th>Čas</th><th>Událost</th><th>Projekt</th><th></th></tr></thead><tbody>' +
@@ -1045,6 +1052,12 @@ function renderDay(m, d, onChange) {
       (h.before ? '<span class="muted">' + esc(evText(h.before)) + '</span>' + (h.after ? ' → ' : '') : '') + (h.after ? esc(evText(h.after)) : '') + '</div>').join('') : '<div class="muted small">Žádné změny.</div>') + '</details>';
 
   bindGeo(m, d);
+  $$('[data-bs]', m).forEach(b => b.onclick = async () => {
+    if (b.classList.contains('on') || $('.bseg .busy', m)) return;
+    b.classList.add('busy'); b.disabled = true; b.innerHTML = '<span class="bspin"></span>';
+    try { const nd = await call('setDayBreak', { email: d.user.email, date: d.date, minutes: b.dataset.bs }); toast('Přestávka uložena'); renderDay(m, nd, onChange); if (onChange) onChange(); }
+    catch (err) { fail(err); renderDay(m, d, onChange); }
+  });
   const f = $('#ef', m);
   if (f) {
     const syncType = () => { $('#efp', m).style.display = f.type.value === 'IN' ? '' : 'none'; };
@@ -1110,7 +1123,21 @@ function bindGeo(m, d) {
     $('.geo-map', m).src = mapUrl(e.geo, true); $('#geo-a', m).href = mapUrl(e.geo);
   });
 }
+/* volba přestávky za den (vedoucí): automaticky podle nastavení / bez přestávky / 30 / 60 min */
+function breakSetHtml(d) {
+  const c = d.calc, set = c.breakSet === null || c.breakSet === undefined ? '' : String(c.breakSet);
+  if (!d.canSetBreak || (!c.grossMin && set === '')) return '';
+  const opts = [['', 'Auto'], ['0', 'Žádná'], ['30', '30 min'], ['60', '60 min']];
+  const s = S.boot.settings;
+  const hint = set === '' ? 'Podle nastavení: ' + (s.breakMinutes || 30) + ' min po ' + (s.breakAfterHours || 6) + ' h práce.'
+    : set === '0' ? 'Tento den se automatická přestávka neodečítá.' + (c.recBreakMin ? ' Zapsané přestávky (' + c.recBreakMin + ' min) se počítají dál – případně je smažte v záznamech.' : '')
+    : 'Přestávka tento den celkem ' + set + ' min' + (c.recBreakMin ? ' (z toho zapsáno ' + c.recBreakMin + ' min).' : '.');
+  return '<div class="bset"><div class="bset-l">Přestávka za den</div><div class="bseg">' +
+    opts.map(o => '<button type="button" class="' + (o[0] === set ? 'on' : '') + '" data-bs="' + o[0] + '">' + o[1] + '</button>').join('') +
+    '</div><div class="muted small">' + esc(hint) + '</div></div>';
+}
 function evText(e) {
+  if (e.minutes !== undefined) return +e.minutes ? 'přestávka ' + e.minutes + ' min' : 'bez přestávky';
   return (e.date ? czDate(e.date) + ' ' : '') + (e.time || '') + ' ' + (S.boot.settings.eventTypes[e.type] || e.type || '') +
     (e.type === 'IN' ? ' (' + projLabel(e.projectId, true) + ')' : '') + (e.note ? ' – ' + e.note : '');
 }

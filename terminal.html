@@ -113,6 +113,12 @@ a { color: var(--link); }
 .btn svg { width: 20px; height: 20px; flex-shrink: 0; }
 .btn:disabled { opacity: .5; cursor: default; }
 .btn.busy:disabled { opacity: .85; cursor: progress; }
+.bset { margin: 0 0 14px; }
+.bset-l { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.bseg { display: flex; gap: 3px; padding: 3px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--border); margin-bottom: 6px; }
+.bseg button { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; min-height: 36px; padding: 6px 4px; border: none; border-radius: 7px; background: none; color: inherit; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.bseg button.on { background: var(--primary); color: var(--primary-ink); font-weight: 650; }
+.bseg button:disabled { opacity: .8; }
 .bspin { width: 15px; height: 15px; flex: none; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
 .seg button { border: none; background: var(--surface); padding: 7px 14px; cursor: pointer; }
