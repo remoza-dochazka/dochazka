@@ -952,7 +952,10 @@ function liveToday() {
 function stopTick() { if (S.tick) { clearInterval(S.tick); S.tick = null; } }
 
 VIEWS.home = async function (el) {
-  setToday(await call('today'));
+  const seq = S.viewSeq;
+  const t = await call('today');
+  if (S.viewSeq !== seq) return; // uživatel mezitím přešel jinam – nevykresluj domovskou stránku přes jiný pohled
+  setToday(t);
   renderHome(el);
   S.tick = setInterval(() => {
     const c = $('#clk'); if (!c) return stopTick();
@@ -1333,7 +1336,9 @@ VIEWS.my = async function (el, p) {
 async function ensureUsers() { if (!S.users) S.users = await call('users'); return S.users; }
 
 VIEWS.team = async function (el, p) {
+  const seq = S.viewSeq;
   const users = await ensureUsers();
+  if (S.viewSeq !== seq) return; // mezitím došlo k přechodu na jiný pohled
   const st = S.teamState = Object.assign({ mode: 'day', date: localDate(), year: ymNow().year, month: ymNow().month, email: 'ALL' }, S.teamState || {}, p || {});
   el.innerHTML = '<h1>Docházka týmu</h1><div class="card"><div class="row">' +
     '<div class="seg"><button data-m="day" class="' + (st.mode === 'day' ? 'on' : '') + '">Den</button><button data-m="month" class="' + (st.mode === 'month' ? 'on' : '') + '">Měsíc</button></div>' +
