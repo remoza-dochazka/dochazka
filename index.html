@@ -882,6 +882,12 @@ function renderGeoGate() {
   };
 }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && geoForced()) geoGate(true); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return; // při návratu do aplikace rovnou obnov aktuální pohled
+  const el = $('#main');
+  if (S.view === 'home') { S.hcAt = 0; call('today').then(t => { if (S.view === 'home') { setToday(t); renderHome(el); } }).catch(() => {}); }
+  else if (S.view === 'team') { const st = S.teamState; if (st && st.mode === 'day' && st.date === localDate()) { const box = $('#tbox', el); if (box) call('dayAll', { date: st.date }).then(raw => { if (S.view === 'team' && document.body.contains(box)) paintTeamDay(box, el, st, raw); }).catch(() => {}); } }
+});
 
 /* jednorázově po přihlášení: požádat o povolení polohy, aby se pak už nikdy neptalo při pípnutí */
 async function askGeoOnce() {
@@ -949,13 +955,14 @@ function liveToday() {
   const add = t.state === 'IN' ? Math.floor((Date.now() - S.fetchedAt) / 60000) : 0;
   return Object.assign({}, t, { netMin: t.netMin + add, projectMin: t.projectMin + add });
 }
-function stopTick() { if (S.tick) { clearInterval(S.tick); S.tick = null; } }
+function stopTick() { if (S.tick) { clearInterval(S.tick); S.tick = null; } if (S.teamTick) { clearInterval(S.teamTick); S.teamTick = null; } }
 
 VIEWS.home = async function (el) {
   const seq = S.viewSeq;
   const t = await call('today');
   if (S.viewSeq !== seq) return; // uživatel mezitím přešel jinam – nevykresluj domovskou stránku přes jiný pohled
   setToday(t);
+  S.hcAt = 0; // otevření domovské stránky vždy stáhne čerstvé dlaždice týmu (interní překreslení dál brzdí)
   renderHome(el);
   S.tick = setInterval(() => {
     const c = $('#clk'); if (!c) return stopTick();
@@ -964,6 +971,10 @@ VIEWS.home = async function (el) {
     const tc = $('#tclk'); if (tc) tc.textContent = c.textContent;
     if (d.getSeconds() === 0) updateRing();
     if (Date.now() - S.fetchedAt > 5 * 60000) call('today').then(t => { setToday(t); renderHome(el); }).catch(() => {});
+    if (isMgr() && $('#hstats') && Date.now() - (S.hcAt || 0) > 30000) {
+      S.hcAt = Date.now();
+      call('dayAll', { date: localDate() }).then(l => { S.hc = teamCounts(l); const h = $('#hstats'); if (h) h.innerHTML = teamTiles(S.hc); }).catch(() => { S.hcAt = 0; });
+    }
   }, 1000);
 };
 
@@ -1033,7 +1044,7 @@ function renderHome(el) {
   if ($('#pnb')) $('#pnb').onclick = () => editProjectNote(t, el);
   if ($('#hstats')) {
     $('#hstats').onclick = () => go('team');
-    if (!S.hcAt || Date.now() - S.hcAt > 60000) {
+    if (!S.hcAt || Date.now() - S.hcAt > 30000) {
       S.hcAt = Date.now();
       call('dayAll', { date: localDate() }).then(l => { S.hc = teamCounts(l); const h = $('#hstats'); if (h) h.innerHTML = teamTiles(S.hc); }).catch(() => { S.hcAt = 0; });
     }
@@ -1169,18 +1180,15 @@ function renderDay(m, d, onChange) {
     const syncType = () => { $('#efp', m).style.display = f.type.value === 'IN' ? '' : 'none'; };
     let touched = false;
     const defTime = () => {
+      // nový záznam má čas prázdný (uživatel ho musí vyplnit), ať formulář nevypadá jako existující pípnutí;
+      // čas se předvyplní jen když vybraný projekt má nastavený svůj začátek/konec
       if (touched || f.id.value) return;
-      const u = d.user, st = toMinC(u.coreStart || s.coreStart || '08:00');
-      const daily = Math.round((u.dailyHours || s.dailyHours || 8) * 60);
-      const brk = daily > (+s.breakAfterHours || 6) * 60 ? (+s.breakMinutes || 30) : 0;
       const ins = d.events.filter(e => e.type === 'IN');
       const lastP = ins.length ? projById(ins[ins.length - 1].projectId) : null;
       const selP = projById(f.projectId.value);
-      let h;
-      if (f.type.value === 'IN') { if (selP && selP.start) { f.time.value = selP.start; return; } h = Math.floor(st / 60); }
-      else if (f.type.value === 'OUT') { if (lastP && lastP.end) { f.time.value = lastP.end; return; } h = Math.floor((st + daily + brk) / 60); }
-      else h = new Date().getHours();
-      f.time.value = pad(Math.min(h, 23)) + ':00';
+      if (f.type.value === 'IN' && selP && selP.start) f.time.value = selP.start;
+      else if (f.type.value === 'OUT' && lastP && lastP.end) f.time.value = lastP.end;
+      else f.time.value = '';
     };
     f.time.oninput = () => { touched = true; };
     f.type.onchange = () => { syncType(); defTime(); }; syncType(); defTime();
@@ -1337,6 +1345,7 @@ async function ensureUsers() { if (!S.users) S.users = await call('users'); retu
 
 VIEWS.team = async function (el, p) {
   const seq = S.viewSeq;
+  if (S.teamTick) { clearInterval(S.teamTick); S.teamTick = null; }
   const users = await ensureUsers();
   if (S.viewSeq !== seq) return; // mezitím došlo k přechodu na jiný pohled
   const st = S.teamState = Object.assign({ mode: 'day', date: localDate(), year: ymNow().year, month: ymNow().month, email: 'ALL' }, S.teamState || {}, p || {});
@@ -1370,7 +1379,11 @@ VIEWS.team = async function (el, p) {
     $$('[data-u]', box).forEach(tr => tr.onclick = () => VIEWS.team(el, { email: tr.dataset.u }));
     return;
   }
-  let all = sortTeam(await call('dayAll', { date: st.date }));
+  paintTeamDay(box, el, st, await call('dayAll', { date: st.date }));
+  startTeamPoll(box, el, st);
+};
+function paintTeamDay(box, el, st, raw) {
+  let all = sortTeam(raw);
   if (st.email !== 'ALL') all = all.filter(r => r.user.email === st.email);
   if (st.date === localDate()) { const rank = { IN: 0, BREAK: 1, OUT: 2 }; all.sort((a, b) => rank[a.day.calc.state] - rank[b.day.calc.state]); }
   const counts = { IN: 0, BREAK: 0, OUT: 0 };
@@ -1394,7 +1407,16 @@ VIEWS.team = async function (el, p) {
     }).join('') : '<tr><td colspan="9" class="empty">Nikdo nemá odpracovanou dobu</td></tr>') + '</tbody></table></div>' + hiddenNote(all.length - list.length);
   bindHidden(box, el);
   $$('[data-u]', box).forEach(tr => tr.onclick = () => openDay(tr.dataset.u, st.date, () => VIEWS.team(el, {})));
-};
+}
+function startTeamPoll(box, el, st) {
+  if (S.teamTick) { clearInterval(S.teamTick); S.teamTick = null; }
+  if (st.mode !== 'day' || st.date !== localDate()) return; // živě obnovujeme jen dnešní denní přehled
+  const seq = S.viewSeq;
+  S.teamTick = setInterval(() => {
+    if (S.view !== 'team' || S.viewSeq !== seq || document.visibilityState !== 'visible' || !document.body.contains(box)) return;
+    call('dayAll', { date: st.date }).then(raw => { if (S.view === 'team' && S.viewSeq === seq && document.body.contains(box)) paintTeamDay(box, el, st, raw); }).catch(() => {});
+  }, 30000);
+}
 function hiddenNote(n) {
   if (S.teamShowAll) return '<div class="hidn"><a data-hid="0">Skrýt pracovníky bez odpracované doby</a></div>';
   return n > 0 ? '<div class="hidn">Skryto ' + n + ' ' + (n === 1 ? 'pracovník' : n < 5 ? 'pracovníci' : 'pracovníků') + ' bez odpracované doby · <a data-hid="1">Zobrazit</a></div>' : '';
