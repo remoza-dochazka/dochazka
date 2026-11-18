@@ -482,7 +482,11 @@ tfoot td { font-weight: 650; background: var(--surface-2); }
 /* úprava časů v měsíčním přehledu – kompaktní časové pole + hromadný režim */
 .tin { width: auto; max-width: 128px; padding: 7px 8px; font-variant-numeric: tabular-nums; }
 .tin.saving { opacity: .55; }
-.tin.dirty { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); background: color-mix(in srgb, var(--primary) 9%, var(--surface)); }
+/* barva ohraničení políčka podle typu: příchod zelená, odchod červená, přestávka hnědá */
+.tin.t-IN { border-color: #1a9e5c; }
+.tin.t-OUT { border-color: var(--bad); }
+.tin.t-BREAK_START, .tin.t-BREAK_END { border-color: #8a5a2b; }
+.tin.dirty { box-shadow: inset 0 0 0 2px var(--primary); background: color-mix(in srgb, var(--primary) 12%, var(--surface)); }
 .fixbar { margin-bottom: 14px; }
 .fixhead { margin-bottom: 14px; }
 .fixhead b { font-size: 17px; }
@@ -497,6 +501,13 @@ tfoot td { font-weight: 650; background: var(--surface-2); }
 .fxl { color: var(--muted); font-size: 13px; min-width: 62px; }
 .fxpj { font-size: 12.5px; color: var(--muted); max-width: 120px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fixbarb { position: sticky; bottom: 0; z-index: 2; display: flex; align-items: center; gap: 10px; margin-top: 14px; padding: 12px 0; background: linear-gradient(to top, var(--bg) 72%, transparent); }
+/* hromadný režim na PC: editovatelné buňky přímo v měsíční tabulce */
+.fixtbl td { vertical-align: middle; }
+.fixtbl .tin { max-width: 112px; padding: 5px 7px; }
+.fxcell { display: flex; flex-direction: column; gap: 5px; }
+.fxrow { display: flex; align-items: center; gap: 6px; }
+.fb { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+.fxpd { display: inline-flex; align-items: center; }
 @media (max-width: 860px) {
   .fixday { grid-template-columns: 1fr; gap: 8px; }
   .fixd { padding-top: 0; font-size: 15px; }
@@ -1340,7 +1351,7 @@ function monthTable(md) {
     const canInline = editable && d.events.length;
     const eplist = d.events.map(ev =>
       '<label class="epr"><span class="epl"><span class="dot ' + ev.type + '"></span>' + esc(evShort(ev.type)) + '</span>' +
-      '<input type="time" class="tin live" data-ev="' + ev.id + '" data-date="' + d.date + '" value="' + esc(ev.time) + '">' +
+      '<input type="time" class="tin live t-' + ev.type + '" data-ev="' + ev.id + '" data-date="' + d.date + '" value="' + esc(ev.time) + '">' +
       (ev.type === 'IN' ? '<span class="eppj" title="' + esc(projLabel(ev.projectId)) + '">' + pdot(ev.projectId) + esc(projLabel(ev.projectId, true)) + '</span>' : '') +
       '</label>').join('');
     const grid = '<div class="tcg"><div><span>Příchod</span><b>' + (hm(c.firstIn) || '—') + '</b></div><div><span>Odchod</span><b>' + out + '</b></div><div><span>Přestávka</span><b>' + (c.breakMin ? dur(c.breakMin) : '—') + '</b></div><div><span>Práce</span><b>' + (c.netMin ? dur(c.netMin) : '—') + '</b></div></div>';
@@ -1417,20 +1428,53 @@ function bindInlineTimes(box, md, email, y, m) {
 }
 
 // hromadný režim: celý měsíc jako editovatelný seznam časů, uložení jedním požadavkem
+function fixInput(ev) {
+  const cur = (S.fixEdits && S.fixEdits[ev.id] !== undefined) ? S.fixEdits[ev.id] : ev.time;
+  return '<input type="time" class="tin fix t-' + ev.type + (cur !== ev.time ? ' dirty' : '') + '" data-ev="' + ev.id + '" data-orig="' + esc(ev.time) + '" value="' + esc(cur) + '">';
+}
+// spáruje přestávky dne (BREAK_START + BREAK_END) podle času kvůli editaci od–do
+function fixBreakPairs(evs) {
+  const sorted = evs.slice().sort((a, b) => a.time < b.time ? -1 : a.time > b.time ? 1 : 0);
+  const pairs = []; let open = null;
+  sorted.forEach(e => {
+    if (e.type === 'BREAK_START') open = { startEv: e, endEv: null };
+    else if (e.type === 'BREAK_END') { if (open) { open.endEv = e; pairs.push(open); open = null; } else pairs.push({ startEv: null, endEv: e }); }
+  });
+  if (open) pairs.push(open);
+  return pairs;
+}
 function renderFixMonth(box, md, email, y, m) {
   const days = md.days.filter(d => d.events.length && canEditDate(d.date));
   const barBtns = () => { const n = fixCount(md); const sv = $('#fixsave', box); if (sv) { sv.disabled = !n; sv.textContent = n ? 'Uložit vše (' + n + ')' : 'Uložit vše'; } };
+  // PC: stejná měsíční tabulka, jen buňky s časy jsou editovatelná políčka (zarovnané sloupce Příchod/Odchod/Přestávka)
+  const rows = md.days.map(d => {
+    const c = d.calc;
+    const ed = canEditDate(d.date) && d.events.length;
+    const ins = d.events.filter(e => e.type === 'IN');
+    const outs = d.events.filter(e => e.type === 'OUT');
+    const bps = ed ? fixBreakPairs(d.events.filter(e => e.type === 'BREAK_START' || e.type === 'BREAK_END')) : [];
+    const brTxt = c.breaks.filter(b => b.end > b.start).map(b => hm(b.start) + '–' + hm(b.end)).join(', ');
+    const pr = Object.keys(c.projects).map(p => '<span class="badge pbadge" style="--pc:' + projColor(p) + '">' + esc(projLabel(p, true)) + ' ' + dur(c.projects[p].min) + '</span>').join(' ');
+    const inCell = ed && ins.length ? '<div class="fxcell">' + ins.map(ev => '<div class="fxrow">' + fixInput(ev) + (ins.length > 1 ? '<span class="fxpd" title="' + esc(projLabel(ev.projectId)) + '">' + pdot(ev.projectId) + '</span>' : '') + '</div>').join('') + '</div>' : (hm(c.firstIn) || '');
+    const outCell = ed && outs.length ? '<div class="fxcell">' + outs.map(ev => '<div class="fxrow">' + fixInput(ev) + '</div>').join('') + '</div>' : (c.lastOut !== null ? hm(c.lastOut) : (c.state !== 'OUT' && d.isToday ? '…' : ''));
+    const brkCell = (ed && bps.length ? '<div class="fxcell">' + bps.map(bp => '<div class="fb">' + (bp.startEv ? fixInput(bp.startEv) : '—') + '<span>–</span>' + (bp.endEv ? fixInput(bp.endEv) : '—') + '</div>').join('') + '</div>' : '<span class="small">' + esc(brTxt) + '</span>') + (c.autoBreakMin ? ' <span class="muted small">+auto ' + c.autoBreakMin + '</span>' : '');
+    return '<tr class="' + (!d.workday ? 'off ' : '') + (d.holiday ? 'hol ' : '') + (d.isToday ? 'today' : '') + '">' +
+      '<td class="num"><b>' + DAYS_S[d.weekday] + '</b> ' + d.date.slice(8) + '. ' + (+d.date.slice(5, 7)) + '.</td>' +
+      '<td>' + inCell + '</td><td>' + outCell + '</td><td>' + brkCell + '</td>' +
+      '<td class="num"><b>' + (c.netMin ? dur(c.netMin) : '') + '</b></td><td>' + pr + '</td>' +
+      '<td>' + (d.holiday ? badge('Svátek', 'info') + ' ' : '') + d.absences.map(a => badge(a.label, 'info')).join(' ') + '</td><td>' + flagBadges(d.flags.filter(f => f !== 'autoBreak')) + '</td></tr>';
+  }).join('');
+  // mobil: kompaktní seznam po dnech (editovatelné dny)
+  const cards = days.map(d =>
+    '<div class="fixday' + (!d.workday ? ' off' : '') + (d.holiday ? ' hol' : '') + (d.isToday ? ' today' : '') + '"><div class="fixd"><b>' + DAYS_S[d.weekday] + '</b> ' + (+d.date.slice(8)) + '. ' + (+d.date.slice(5, 7)) + '.</div><div class="fixevs">' +
+    d.events.map(ev => '<label class="fxr"><span class="dot ' + ev.type + '"></span><span class="fxl">' + esc(evShort(ev.type)) + '</span>' + fixInput(ev) +
+      (ev.type === 'IN' ? '<span class="fxpj" title="' + esc(projLabel(ev.projectId)) + '">' + pdot(ev.projectId) + esc(projLabel(ev.projectId, true)) + '</span>' : '') +
+      '</label>').join('') + '</div></div>').join('');
   box.innerHTML =
-    '<div class="fixhead"><b>Opravit časy</b> <span class="muted">' + MONTHS[m - 1] + ' ' + y + '</span><div class="muted small">Přepiš časy a dole ulož. Mění se jen časy, přidání a mazání záznamů dělej přes detail dne.</div></div>' +
-    (days.length ? '<div class="fixlist">' + days.map(d =>
-      '<div class="fixday' + (!d.workday ? ' off' : '') + (d.holiday ? ' hol' : '') + (d.isToday ? ' today' : '') + '"><div class="fixd"><b>' + DAYS_S[d.weekday] + '</b> ' + (+d.date.slice(8)) + '. ' + (+d.date.slice(5, 7)) + '.</div><div class="fixevs">' +
-      d.events.map(ev => {
-        const cur = (S.fixEdits && S.fixEdits[ev.id] !== undefined) ? S.fixEdits[ev.id] : ev.time;
-        return '<label class="fxr"><span class="dot ' + ev.type + '"></span><span class="fxl">' + esc(evShort(ev.type)) + '</span>' +
-          '<input type="time" class="tin fix' + (cur !== ev.time ? ' dirty' : '') + '" data-ev="' + ev.id + '" data-orig="' + esc(ev.time) + '" value="' + esc(cur) + '">' +
-          (ev.type === 'IN' ? '<span class="fxpj" title="' + esc(projLabel(ev.projectId)) + '">' + pdot(ev.projectId) + esc(projLabel(ev.projectId, true)) + '</span>' : '') +
-          '</label>';
-      }).join('') + '</div></div>').join('') + '</div>'
+    '<div class="fixhead"><b>Opravit časy</b> <span class="muted">' + MONTHS[m - 1] + ' ' + y + '</span><div class="muted small">Přepiš časy přímo v tabulce a dole ulož. Mění se jen časy; přidání a mazání záznamů dělej přes detail dne.</div></div>' +
+    (days.length ?
+      '<div class="tcards mcards">' + cards + '</div>' +
+      '<div class="tbl-wrap ttbl fixtbl"><table><thead><tr><th>Den</th><th>Příchod</th><th>Odchod</th><th>Přestávka</th><th>Práce</th><th>Projekty</th><th>Absence</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>'
       : '<div class="muted" style="padding:16px 2px">V tomto měsíci není co opravovat.</div>') +
     '<div class="fixbarb"><button class="btn" id="fixcancel">Zrušit</button><div class="spacer"></div><button class="btn primary" id="fixsave">Uložit vše</button></div>';
   $$('input.tin.fix', box).forEach(inp => {

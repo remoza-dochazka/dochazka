@@ -482,7 +482,11 @@ tfoot td { font-weight: 650; background: var(--surface-2); }
 /* úprava časů v měsíčním přehledu – kompaktní časové pole + hromadný režim */
 .tin { width: auto; max-width: 128px; padding: 7px 8px; font-variant-numeric: tabular-nums; }
 .tin.saving { opacity: .55; }
-.tin.dirty { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); background: color-mix(in srgb, var(--primary) 9%, var(--surface)); }
+/* barva ohraničení políčka podle typu: příchod zelená, odchod červená, přestávka hnědá */
+.tin.t-IN { border-color: #1a9e5c; }
+.tin.t-OUT { border-color: var(--bad); }
+.tin.t-BREAK_START, .tin.t-BREAK_END { border-color: #8a5a2b; }
+.tin.dirty { box-shadow: inset 0 0 0 2px var(--primary); background: color-mix(in srgb, var(--primary) 12%, var(--surface)); }
 .fixbar { margin-bottom: 14px; }
 .fixhead { margin-bottom: 14px; }
 .fixhead b { font-size: 17px; }
@@ -497,6 +501,13 @@ tfoot td { font-weight: 650; background: var(--surface-2); }
 .fxl { color: var(--muted); font-size: 13px; min-width: 62px; }
 .fxpj { font-size: 12.5px; color: var(--muted); max-width: 120px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fixbarb { position: sticky; bottom: 0; z-index: 2; display: flex; align-items: center; gap: 10px; margin-top: 14px; padding: 12px 0; background: linear-gradient(to top, var(--bg) 72%, transparent); }
+/* hromadný režim na PC: editovatelné buňky přímo v měsíční tabulce */
+.fixtbl td { vertical-align: middle; }
+.fixtbl .tin { max-width: 112px; padding: 5px 7px; }
+.fxcell { display: flex; flex-direction: column; gap: 5px; }
+.fxrow { display: flex; align-items: center; gap: 6px; }
+.fb { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+.fxpd { display: inline-flex; align-items: center; }
 @media (max-width: 860px) {
   .fixday { grid-template-columns: 1fr; gap: 8px; }
   .fixd { padding-top: 0; font-size: 15px; }
