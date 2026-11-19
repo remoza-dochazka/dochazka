@@ -480,6 +480,12 @@ tfoot td { font-weight: 650; background: var(--surface-2); }
 .rtbl .rv { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .wproj .pnote, .wproj .pn, .tnm, .unm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* úprava časů v měsíčním přehledu – kompaktní časové pole + hromadný režim */
+/* načítací proužek (skeleton) – místo zastaralé hodnoty, dokud nedorazí čerstvá data ze serveru */
+.skel { display: inline-block; height: .78em; min-width: 2em; border-radius: 6px; vertical-align: middle; opacity: .85;
+  background: linear-gradient(90deg, var(--border) 25%, color-mix(in srgb, var(--border) 45%, var(--surface)) 50%, var(--border) 75%);
+  background-size: 200% 100%; animation: skel 1.15s ease-in-out infinite; }
+@keyframes skel { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .skel { animation: none; } }
 .tin { width: auto; max-width: 128px; padding: 7px 8px; font-variant-numeric: tabular-nums; }
 .tin.saving { opacity: .55; }
 /* barva ohraničení políčka podle typu: příchod zelená, odchod červená, přestávka hnědá */

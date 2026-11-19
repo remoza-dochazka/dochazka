@@ -480,6 +480,12 @@ tfoot td { font-weight: 650; background: var(--surface-2); }
 .rtbl .rv { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .wproj .pnote, .wproj .pn, .tnm, .unm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* úprava časů v měsíčním přehledu – kompaktní časové pole + hromadný režim */
+/* načítací proužek (skeleton) – místo zastaralé hodnoty, dokud nedorazí čerstvá data ze serveru */
+.skel { display: inline-block; height: .78em; min-width: 2em; border-radius: 6px; vertical-align: middle; opacity: .85;
+  background: linear-gradient(90deg, var(--border) 25%, color-mix(in srgb, var(--border) 45%, var(--surface)) 50%, var(--border) 75%);
+  background-size: 200% 100%; animation: skel 1.15s ease-in-out infinite; }
+@keyframes skel { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .skel { animation: none; } }
 .tin { width: auto; max-width: 128px; padding: 7px 8px; font-variant-numeric: tabular-nums; }
 .tin.saving { opacity: .55; }
 /* barva ohraničení políčka podle typu: příchod zelená, odchod červená, přestávka hnědá */
@@ -639,7 +645,7 @@ async function call(action, args) {
       const c = cGet(k);
       if (c && !(action === 'today' && c.d.date !== localDate())) {
         if (!SWR.fresh) SWR.pending.push({ action: action, args: args, k: k, j: JSON.stringify(c.d) });
-        return action === 'today' ? Object.assign({}, c.d, { __at: c.t }) : c.d;
+        return (action === 'today' || action === 'month') ? Object.assign({}, c.d, { __at: c.t }) : c.d;
       }
     }
     const d = await callNet(action, args);
@@ -654,9 +660,12 @@ async function runView(view, el, params) {
   try { await VIEWS[view](el, params || {}); } finally { if (SWR && SWR.seq === seq) { const pend = SWR.pending; SWR = null; if (pend.length) swrRefresh(view, el, params, seq, pend); } }
 }
 async function swrRefresh(view, el, params, seq, pend) {
-  let changed = false;
-  await Promise.all(pend.map(p => callNet(p.action, p.args).then(d => { cSet(p.k, d); if (JSON.stringify(d) !== p.j) changed = true; }).catch(() => {})));
-  if (!changed || S.viewSeq !== seq || S.view !== view || S.punching || $('.modal-bg') || $('.cfm-bg')) return;
+  let changed = false, freshToday = null;
+  await Promise.all(pend.map(p => callNet(p.action, p.args).then(d => { cSet(p.k, d); if (p.action === 'today') freshToday = d; if (JSON.stringify(d) !== p.j) changed = true; }).catch(() => {})));
+  if (S.viewSeq !== seq || S.view !== view || S.punching || $('.modal-bg') || $('.cfm-bg')) return;
+  // i když se dnešek nezměnil, odhal čerstvá data (ať na domovské nezůstane skeleton)
+  if (view === 'home' && freshToday && !S.todayFresh && !changed) { setToday(freshToday); S.todayFresh = true; renderHome(el); return; }
+  if (!changed) return;
   stopTick();
   SWR = { seq: seq, pending: [], fresh: true };
   try { if (view === 'team' || view === 'users') S.users = null; await VIEWS[view](el, params || {}); } catch (e) {} finally { if (SWR && SWR.seq === seq) SWR = null; }
@@ -934,7 +943,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return; // při návratu do aplikace rovnou obnov aktuální pohled
   const el = $('#main');
-  if (S.view === 'home') { S.hcAt = 0; call('today').then(t => { if (S.view === 'home') { setToday(t); renderHome(el); } }).catch(() => {}); }
+  if (S.view === 'home') { S.hcAt = 0; S.hcFresh = false; call('today').then(t => { if (S.view === 'home') { setToday(t); renderHome(el); } }).catch(() => {}); }
   else if (S.view === 'team') { const st = S.teamState; if (st && st.mode === 'day' && st.date === localDate()) { const box = $('#tbox', el); if (box) call('dayAll', { date: st.date }).then(raw => { if (S.view === 'team' && document.body.contains(box)) paintTeamDay(box, el, st, raw); }).catch(() => {}); } }
 });
 
@@ -998,7 +1007,7 @@ function go(view, params, fromHistory) {
 /* ================================================================
  *  DOMŮ – hlavní obrazovka pracovníka
  * ================================================================ */
-function setToday(t) { const at = t && t.__at; if (at) { t = Object.assign({}, t); delete t.__at; } S.today = t; S.fetchedAt = at || Date.now(); if (t && !at) cSet(cKey('today'), t); }
+function setToday(t) { const at = t && t.__at; if (at) { t = Object.assign({}, t); delete t.__at; } S.today = t; S.fetchedAt = at || Date.now(); S.todayFresh = !at; if (t && !at) cSet(cKey('today'), t); }
 function liveToday() {
   const t = S.today; if (!t) return null;
   const add = t.state === 'IN' ? Math.floor((Date.now() - S.fetchedAt) / 60000) : 0;
@@ -1011,7 +1020,8 @@ VIEWS.home = async function (el) {
   const t = await call('today');
   if (S.viewSeq !== seq) return; // uživatel mezitím přešel jinam – nevykresluj domovskou stránku přes jiný pohled
   setToday(t);
-  S.hcAt = 0; // otevření domovské stránky vždy stáhne čerstvé dlaždice týmu (interní překreslení dál brzdí)
+  if (SWR && SWR.fresh) S.todayFresh = true; // revalidovaný průchod je čerstvý i když ho SWR vrátí z (už obnovené) mezipaměti
+  S.hcAt = 0; S.hcFresh = false; // otevření domovské stránky vždy stáhne čerstvé dlaždice týmu (skeleton do načtení)
   renderHome(el);
   S.tick = setInterval(() => {
     const c = $('#clk'); if (!c) return stopTick();
@@ -1022,7 +1032,7 @@ VIEWS.home = async function (el) {
     if (Date.now() - S.fetchedAt > 5 * 60000) call('today').then(t => { setToday(t); renderHome(el); }).catch(() => {});
     if (isMgr() && $('#hstats') && Date.now() - (S.hcAt || 0) > 30000) {
       S.hcAt = Date.now();
-      call('dayAll', { date: localDate() }).then(l => { S.hc = teamCounts(l); const h = $('#hstats'); if (h) h.innerHTML = teamTiles(S.hc); }).catch(() => { S.hcAt = 0; });
+      callNet('dayAll', { date: localDate() }).then(l => { S.hc = teamCounts(l); S.hcFresh = true; const h = $('#hstats'); if (h) h.innerHTML = teamTiles(S.hc); }).catch(() => { S.hcAt = 0; });
     }
   }, 1000);
 };
@@ -1042,7 +1052,7 @@ function scaleHtml(net, fund) {
 }
 function pctHtml(net, fund) { return '<span id="rpct" class="' + (fund > 0 && net >= fund ? 'over' : '') + '">' + pct(net, fund) + '</span>'; }
 function updateRing() {
-  const t = liveToday(); if (!t || !$('#ring')) return;
+  const t = liveToday(); if (!t || !$('#ring') || !S.todayFresh) return;
   $('#ring').innerHTML = barHtml(t.netMin, t.fundMin);
   $('#rnet').textContent = dur(t.netMin);
   if ($('#rscale')) $('#rscale').innerHTML = scaleHtml(t.netMin, t.fundMin);
@@ -1051,6 +1061,8 @@ function updateRing() {
 }
 function renderHome(el) {
   const t = liveToday(), s = S.boot.settings, u = S.boot.user;
+  const fresh = S.todayFresh; // dokud nejsou data potvrzená ze serveru, čísla dne se nezobrazí (ať nejde přečíst zastaralá hodnota)
+  const sk = w => '<span class="skel" style="width:' + w + '"></span>';
   const d = new Date();
   const st = STATE[t.state];
   let btns = '';
@@ -1058,23 +1070,23 @@ function renderHome(el) {
   if (t.state === 'IN') btns = '<button class="btn brk" data-a="BREAK_START">Přestávka</button><button class="btn chg" data-a="CHANGE">Změnit projekt</button><button class="btn out wide" data-a="OUT">Odchod</button>';
   if (t.state === 'BREAK') btns = '<button class="btn in" data-a="BREAK_END">Konec přestávky</button><button class="btn out" data-a="OUT">Odchod</button>';
   el.innerHTML = '<div class="home">' +
-    (isMgr() ? '<div id="hstats" class="hstats" title="Docházka týmu">' + teamTiles(S.hc || { IN: '–', BREAK: '–', OUT: '–', ABS: '–' }) + '</div>' : '') +
+    (isMgr() ? '<div id="hstats" class="hstats" title="Docházka týmu">' + teamTiles(S.hcFresh ? S.hc : null) + '</div>' : '') +
     '<div class="home-head"><div class="muted">' + esc(u.name) + '</div><div class="spacer"></div>' + badge(st[0], st[1]) + '</div>' +
     '<div class="clock-box"><div class="d">' + DAYS[d.getDay()] + ' ' + d.getDate() + '. ' + (d.getMonth() + 1) + '. ' + d.getFullYear() + '</div>' +
     '<div class="c" id="clk">' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()) + '</div></div>' +
-    '<div class="wbox"><div class="muted small">Odpracováno dnes</div><div class="top"><div class="big" id="rnet">' + dur(t.netMin) + '</div></div>' +
-    '<div class="barrow"><div class="bar" id="ring">' + barHtml(t.netMin, t.fundMin) + '</div>' + pctHtml(t.netMin, t.fundMin) + '</div>' +
-    '<div class="scale" id="rscale">' + scaleHtml(t.netMin, t.fundMin) + '</div>' +
+    '<div class="wbox"><div class="muted small">Odpracováno dnes</div><div class="top"><div class="big" id="rnet">' + (fresh ? dur(t.netMin) : sk('2.4em')) + '</div></div>' +
+    '<div class="barrow"><div class="bar" id="ring">' + (fresh ? barHtml(t.netMin, t.fundMin) : '') + '</div>' + (fresh ? pctHtml(t.netMin, t.fundMin) : '<span id="rpct"></span>') + '</div>' +
+    '<div class="scale" id="rscale">' + (fresh ? scaleHtml(t.netMin, t.fundMin) : '<span>0:00</span><span>' + dur(t.fundMin) + '</span>') + '</div>' +
     '<div class="wproj"><div class="muted small">Aktivní projekt</div>' + (t.state !== 'OUT'
       ? '<div class="pnr">' + pdot(t.project) + '<div class="pn">' + esc(projLabel(t.project)) + '</div><button class="nbtn' + (t.projectNote ? ' has' : '') + '" id="pnb" title="Poznámka k projektu" aria-label="Poznámka k projektu">' + icon('note') + '</button></div>' +
         (t.projectNote ? '<div class="pnote">„' + esc(t.projectNote) + '“</div>' : '')
       : '<div class="pn">—</div>') + '</div>' +
     '<div class="wcols"><div class="wcol">' +
-    '<div class="wi"><span>Příchod</span><b>' + (t.shiftStart ? esc(t.shiftStart.time) + ' <small class="muted">(' + (t.shiftStart.date === t.date ? 'dnes' : DAYS[new Date(t.shiftStart.date + 'T12:00:00').getDay()]) + ')</small>' : t.firstIn !== null ? hm(t.firstIn) : '—') + '</b></div>' +
-    '<div class="wi"><span>Odchod</span><b>' + (t.state === 'OUT' && t.lastOut !== null && t.lastOut !== undefined ? hm(t.lastOut) : '—') + '</b></div>' +
+    '<div class="wi"><span>Příchod</span><b>' + (!fresh ? sk('3em') : t.shiftStart ? esc(t.shiftStart.time) + ' <small class="muted">(' + (t.shiftStart.date === t.date ? 'dnes' : DAYS[new Date(t.shiftStart.date + 'T12:00:00').getDay()]) + ')</small>' : t.firstIn !== null ? hm(t.firstIn) : '—') + '</b></div>' +
+    '<div class="wi"><span>Odchod</span><b>' + (!fresh ? sk('3em') : t.state === 'OUT' && t.lastOut !== null && t.lastOut !== undefined ? hm(t.lastOut) : '—') + '</b></div>' +
     '</div><div class="wcol">' +
-    '<div class="wi"><span>Čas na projektu</span><b id="pmin">' + (t.state !== 'OUT' ? dur(t.projectMin) : '—') + '</b></div>' +
-    '<div class="wi"><span>Přestávky</span><b>' + dur(t.breakMin) + '</b></div>' +
+    '<div class="wi"><span>Čas na projektu</span><b id="pmin">' + (!fresh ? sk('3em') : t.state !== 'OUT' ? dur(t.projectMin) : '—') + '</b></div>' +
+    '<div class="wi"><span>Přestávky</span><b>' + (!fresh ? sk('3em') : dur(t.breakMin)) + '</b></div>' +
     '</div></div>' + (t.absences.length ? '<div style="margin-top:10px">' + t.absences.map(a => badge(a.label, 'info')).join(' ') + '</div>' : '') + '</div>' +
     '<div class="actions">' + btns + '</div>' +
 
@@ -1095,7 +1107,7 @@ function renderHome(el) {
     $('#hstats').onclick = () => go('team');
     if (!S.hcAt || Date.now() - S.hcAt > 30000) {
       S.hcAt = Date.now();
-      call('dayAll', { date: localDate() }).then(l => { S.hc = teamCounts(l); const h = $('#hstats'); if (h) h.innerHTML = teamTiles(S.hc); }).catch(() => { S.hcAt = 0; });
+      callNet('dayAll', { date: localDate() }).then(l => { S.hc = teamCounts(l); S.hcFresh = true; const h = $('#hstats'); if (h) h.innerHTML = teamTiles(S.hc); }).catch(() => { S.hcAt = 0; });
     }
   }
 }
@@ -1138,7 +1150,7 @@ async function doPunch(type, pid, el) {
   if (S.punching) return;
   const prev = S.today, prevAt = S.fetchedAt;
   S.punching = true;
-  S.today = optimisticToday(type, pid); S.fetchedAt = Date.now();
+  S.today = optimisticToday(type, pid); S.fetchedAt = Date.now(); S.todayFresh = true;
   renderHome(el);
   try {
     // poloha u příchodu, změny projektu a odchodu; při režimu „vyžadovat“ se čeká, jinak se doplní na pozadí
@@ -1324,11 +1336,14 @@ function bindMonthNav(root, id, cb) {
     cb(y, m);
   });
 }
-function monthStats(sum) {
-  return '<div class="stats"><div class="stat"><div class="v">' + dur(sum.netMin) + '</div><div class="l">Odpracováno (čistý čas)</div></div>' +
-    '<div class="stat"><div class="v">' + dur(sum.fundMin) + '</div><div class="l">Fond pracovní doby</div></div>' +
-    '<div class="stat"><div class="v">' + dur(sum.absMin) + '</div><div class="l">Absence</div></div>' +
-    '<div class="stat"><div class="v" style="color:' + (sum.saldoMin < 0 ? 'var(--bad)' : 'var(--ok)') + '">' + (sum.saldoMin > 0 ? '+' : '') + dur(sum.saldoMin) + '</div><div class="l">Saldo (přesčas / chybí)</div></div></div>';
+function monthStats(sum, fresh) {
+  if (fresh === undefined) fresh = true;
+  const sk = '<span class="skel" style="width:2.6em"></span>';
+  const v = x => fresh ? x : sk;
+  return '<div class="stats"><div class="stat"><div class="v">' + v(dur(sum.netMin)) + '</div><div class="l">Odpracováno (čistý čas)</div></div>' +
+    '<div class="stat"><div class="v">' + v(dur(sum.fundMin)) + '</div><div class="l">Fond pracovní doby</div></div>' +
+    '<div class="stat"><div class="v">' + v(dur(sum.absMin)) + '</div><div class="l">Absence</div></div>' +
+    '<div class="stat"><div class="v" style="color:' + (fresh && sum.saldoMin < 0 ? 'var(--bad)' : (fresh ? 'var(--ok)' : 'inherit')) + '">' + v((sum.saldoMin > 0 ? '+' : '') + dur(sum.saldoMin)) + '</div><div class="l">Saldo (přesčas / chybí)</div></div></div>';
 }
 function evShort(t) { return ({ IN: 'Příchod', OUT: 'Odchod', BREAK_START: 'Přestávka', BREAK_END: 'Konec' })[t] || (S.boot.settings.eventTypes[t] || t); }
 // výběr/změna projektu u příchodu v úpravě dne; live = okamžité uložení (inline), jinak hromadný režim (S.fixProj)
@@ -1400,17 +1415,20 @@ function fixCount(md) { let n = 0; md.days.forEach(d => d.events.forEach(ev => {
 async function renderMonthInto(box, email, y, m) {
   loading(box);
   const md = await call('month', { email: email, year: y, month: m });
+  const fresh = !md.__at || !!(SWR && SWR.fresh); // z cache (__at) = stará data → skeleton; čerstvý fetch nebo revalidace = zobraz
+  if (md.__at) delete md.__at;
   const key = email + '|' + y + '|' + m;
   if (S.fixMode && S.fixKey !== key) { S.fixMode = false; S.fixEdits = {}; S.fixProj = {}; } // přechod na jiný měsíc ukončí režim oprav
-  paintMonth(box, md, email, y, m);
+  paintMonth(box, md, email, y, m, fresh);
 }
 
-function paintMonth(box, md, email, y, m) {
+function paintMonth(box, md, email, y, m, fresh) {
+  if (fresh === undefined) fresh = true;
   if (S.fixMode) return renderFixMonth(box, md, email, y, m);
   const reload = () => renderMonthInto(box, email, y, m).catch(fail);
   const openDays = new Set($$('.mcard.open', box).map(c => { const b = c.querySelector('[data-day]'); return b ? b.dataset.day : null; }));
   const sy = window.scrollY;
-  box.innerHTML = monthStats(md.sum) +
+  box.innerHTML = monthStats(md.sum, fresh) +
     (anyEditable(md) ? '<div class="row fixbar"><div class="spacer"></div><button class="btn sm" id="fixon">Opravit časy</button></div>' : '') +
     monthTable(md);
   $$('.mcard', box).forEach(c => { const b = c.querySelector('[data-day]'); if (b && openDays.has(b.dataset.day)) c.classList.add('open'); });
@@ -1642,7 +1660,9 @@ function teamCounts(list) {
   return c;
 }
 function teamTiles(c, cls) {
-  return '<div class="stats tstats ' + (cls || '') + '"><div class="stat"><div class="v">' + c.IN + '</div><div class="l">V práci</div></div><div class="stat"><div class="v">' + c.BREAK + '</div><div class="l">Na přestávce</div></div><div class="stat"><div class="v">' + c.OUT + '</div><div class="l">Mimo práci</div></div><div class="stat"><div class="v">' + c.ABS + '</div><div class="l">Absence</div></div></div>';
+  const sk = '<span class="skel" style="width:1em"></span>';
+  const n = x => c ? x : sk;
+  return '<div class="stats tstats ' + (cls || '') + '"><div class="stat"><div class="v">' + n(c && c.IN) + '</div><div class="l">V práci</div></div><div class="stat"><div class="v">' + n(c && c.BREAK) + '</div><div class="l">Na přestávce</div></div><div class="stat"><div class="v">' + n(c && c.OUT) + '</div><div class="l">Mimo práci</div></div><div class="stat"><div class="v">' + n(c && c.ABS) + '</div><div class="l">Absence</div></div></div>';
 }
 function sortTeam(list) {
   const coll = new Intl.Collator('cs', { sensitivity: 'base' });
